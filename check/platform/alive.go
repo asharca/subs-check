@@ -13,7 +13,7 @@ func CheckAlive(httpClient *http.Client) (bool, error) {
 	}
 	defer resp.Body.Close()
 	// 2xx
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+	if resp.StatusCode >= 200 && resp.StatusCode < 302 {
 		return true, nil
 	}
 	return false, nil

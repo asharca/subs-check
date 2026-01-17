@@ -1,0 +1,24 @@
+version: "3"
+services:
+  subs-check:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VERSION: "dev"
+        GITHUB_SHA: "local-build"
+    image: subs-check:local
+    container_name: subs-check
+    volumes:
+      - ./config:/app/config
+      - ./output:/app/output
+    ports:
+      - "8299:8299"
+      - "8199:8199"
+    environment:
+      - TZ=Asia/Shanghai
+      # - HTTP_PROXY=http://192.168.1.1:7890
+      # - HTTPS_PROXY=http://192.168.1.1:7890
+      # - API_KEY=subs-check
+    restart: always
+    network_mode: bridge
