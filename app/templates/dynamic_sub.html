@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>动态订阅生成器</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .main-container {
+            display: flex;
+            gap: 20px;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        .left-panel {
+            flex: 0 0 450px;
+            min-width: 400px;
+        }
+        .right-panel {
+            flex: 1;
+            min-width: 500px;
+        }
+        .container {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            padding: 30px;
+            height: 100%;
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 24px;
+        }
+        .subtitle {
+            color: #666;
+            margin-bottom: 25px;
+            font-size: 13px;
+        }
+        .form-group {
+            margin-bottom: 18px;
+        }
+        label {
+            display: block;
+            margin-bottom: 6px;
+            color: #333;
+            font-weight: 500;
+            font-size: 13px;
+        }
+        input[type="text"], select {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 13px;
+            transition: border-color 0.3s;
+        }
+        input[type="text"]:focus, select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            cursor: pointer;
+        }
+        .btn {
+            width: 100%;
+            padding: 12px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+        }
+        .btn:active {
+            transform: translateY(0);
+        }
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .result {
+            margin-top: 18px;
+            padding: 12px;
+            background: #f5f5f5;
+            border-radius: 8px;
+            display: none;
+        }
+        .result.show {
+            display: block;
+        }
+        .result-url {
+            word-break: break-all;
+            padding: 10px;
+            background: white;
+            border-radius: 6px;
+            margin: 8px 0;
+            font-family: monospace;
+            font-size: 12px;
+            color: #333;
+        }
+        .copy-btn {
+            padding: 8px 16px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            width: 100%;
+        }
+        .copy-btn:hover {
+            background: #45a049;
+        }
+        .hint {
+            font-size: 11px;
+            color: #999;
+            margin-top: 4px;
+        }
+
+        /* 控制台样式 */
+        .console-container {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            padding: 0;
+            height: calc(100vh - 40px);
+            display: flex;
+            flex-direction: column;
+        }
+        .console-header {
+            padding: 20px 25px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        .console-header h2 {
+            font-size: 20px;
+            color: #333;
+            margin: 0;
+        }
+        .logs-container {
+            flex: 1;
+            overflow-y: auto;
+            background-color: #1e1e1e;
+            padding: 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+            color: #d4d4d4;
+        }
+        .progress-section {
+            padding: 15px 25px;
+            background-color: #f8f9fa;
+            border-top: 1px solid #e0e0e0;
+        }
+        .progress-info {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-size: 13px;
+            color: #333;
+        }
+        .progress {
+            height: 20px;
+            position: relative;
+            background-color: #e9ecef;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        .progress-bar-success {
+            background: linear-gradient(90deg, #28a745 0%, #20c997 100%);
+            position: absolute;
+            height: 100%;
+            left: 0;
+            top: 0;
+            z-index: 10;
+            transition: width 0.5s ease;
+            box-shadow: 0 0 10px rgba(40, 167, 69, 0.5);
+        }
+        .progress-bar-total {
+            background-color: rgba(23, 162, 184, 0.3);
+            position: absolute;
+            height: 100%;
+            left: 0;
+            top: 0;
+            z-index: 5;
+            transition: width 0.5s ease;
+        }
+        .log-info { color: #4ec9b0; }
+        .log-error { color: #f48771; }
+        .log-warn { color: #dcdcaa; }
+        .log-debug { color: #569cd6; }
+        .log-time { color: #858585; }
+        .success-highlight {
+            font-weight: bold;
+            color: #28a745;
+            padding: 0 3px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .rotate-animation {
+            animation: spin 1s linear infinite;
+            display: inline-block;
+        }
+
+        /* 响应式 */
+        @media (max-width: 1200px) {
+            .main-container {
+                flex-direction: column;
+            }
+            .left-panel, .right-panel {
+                flex: 1;
+                min-width: 100%;
+            }
+            .console-container {
+                height: 600px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="main-container">
+        <!-- 左侧表单 -->
+        <div class="left-panel">
+            <div class="container">
+                <h1>🚀 动态订阅生成器</h1>
+                <p class="subtitle">根据流媒体支持情况过滤节点，生成专属订阅链接</p>
+
+                <form id="subForm">
+                    <div class="form-group">
+                        <label for="sub_link">订阅链接 <span style="color: red;">*</span></label>
+                        <input type="text" id="sub_link" name="sub_link" placeholder="请输入订阅链接" required>
+                        <div class="hint">必填项，请输入完整的订阅链接</div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="app">流媒体过滤</label>
+                        <select id="app" name="app">
+                            <option value="">不过滤（显示所有节点）</option>
+                            <option value="gemini" selected>Gemini</option>
+                            <option value="openai">OpenAI / ChatGPT</option>
+                            <option value="netflix">Netflix</option>
+                            <option value="disney">Disney+</option>
+                            <option value="youtube">YouTube</option>
+                            <option value="tiktok">TikTok</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="suffix">节点名称后缀</label>
+                        <input type="text" id="suffix" name="suffix" value="§gemini§" placeholder="例如: §gemini§ 或 ✨ 或 [Gemini]">
+                        <div class="hint">在节点名称后添加自定义后缀，方便识别</div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="target">导出格式（可选）</label>
+                        <select id="target" name="target">
+                            <option value="">YAML（默认）</option>
+                            <option value="Clash">Clash</option>
+                            <option value="ClashMeta">Clash Meta</option>
+                            <option value="V2Ray">V2Ray</option>
+                            <option value="ShadowRocket">ShadowRocket</option>
+                            <option value="QX">Quantumult X</option>
+                            <option value="sing-box">Sing-Box</option>
+                            <option value="Surge">Surge</option>
+                            <option value="Surfboard">Surfboard</option>
+                            <option value="URI">URI</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <div class="checkbox-group">
+                            <input type="checkbox" id="refresh" name="refresh">
+                            <label for="refresh" style="margin: 0;">强制刷新缓存</label>
+                        </div>
+                        <div class="hint">勾选后将重新检测节点（耗时较长）</div>
+                    </div>
+
+                    <button type="submit" class="btn" id="generateBtn">
+                        <i class="bi bi-rocket-takeoff me-2"></i>生成订阅链接
+                    </button>
+                </form>
+
+                <div id="result" class="result">
+                    <strong>生成的订阅链接：</strong>
+                    <div class="result-url" id="resultUrl"></div>
+                    <button class="copy-btn" onclick="copyUrl()">
+                        <i class="bi bi-clipboard me-1"></i>复制链接
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 右侧控制台 -->
+        <div class="right-panel">
+            <div class="console-container">
+                <div class="console-header">
+                    <h2><i class="bi bi-terminal me-2"></i>实时日志</h2>
+                </div>
+                <div id="logs" class="logs-container">等待生成订阅...</div>
+                <div class="progress-section">
+                    <div class="progress-info">
+                        <div>成功节点: <span id="successText">N/A</span></div>
+                        <div><span id="processPercent">N/A</span></div>
+                    </div>
+                    <div class="progress">
+                        <div id="progressBarSuccess" class="progress-bar-success" style="width: 0%"></div>
+                        <div id="progressBarTotal" class="progress-bar-total" style="width: 0%"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let logUpdateInterval = null;
+        let statusUpdateInterval = null;
+        let isGenerating = false;
+
+        // 当流媒体选项改变时，自动更新后缀建议
+        document.getElementById('app').addEventListener('change', function() {
+            const suffixInput = document.getElementById('suffix');
+            const app = this.value;
+
+            const suffixMap = {
+                'gemini': '§gemini§',
+                'openai': '§openai§',
+                'netflix': '§netflix§',
+                'disney': '§disney§',
+                'youtube': '§youtube§',
+                'tiktok': '§tiktok§',
+                '': ''
+            };
+
+            const currentValue = suffixInput.value;
+            const isDefaultValue = Object.values(suffixMap).includes(currentValue) || currentValue === '';
+
+            if (isDefaultValue && suffixMap[app] !== undefined) {
+                suffixInput.value = suffixMap[app];
+            }
+        });
+
+        document.getElementById('subForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+
+            const baseUrl = window.location.origin + window.location.pathname;
+            const params = new URLSearchParams();
+
+            const subLink = document.getElementById('sub_link').value.trim();
+            const app = document.getElementById('app').value;
+            const suffix = document.getElementById('suffix').value.trim();
+            const target = document.getElementById('target').value;
+            const refresh = document.getElementById('refresh').checked;
+
+            if (subLink) params.append('sub_link', subLink);
+            if (app) params.append('app', app);
+            if (suffix) params.append('suffix', suffix);
+            if (target) params.append('target', target);
+            if (refresh) params.append('refresh', 'true');
+
+            const url = params.toString() ? baseUrl + '?' + params.toString() : baseUrl;
+
+            document.getElementById('resultUrl').textContent = url;
+            document.getElementById('result').classList.add('show');
+
+            // 开始生成，启动日志监控
+            startGeneration(url);
+        });
+
+        function startGeneration(url) {
+            isGenerating = true;
+            const generateBtn = document.getElementById('generateBtn');
+
+            // 禁用按钮并显示加载状态
+            generateBtn.disabled = true;
+            generateBtn.innerHTML = '<i class="bi bi-arrow-repeat me-2 rotate-animation"></i>正在生成中...';
+
+            // 清空日志
+            document.getElementById('logs').textContent = '开始生成订阅...\n';
+
+            // 开始轮询日志和状态
+            startLogPolling();
+            startStatusPolling();
+
+            // 发起请求
+            fetch(url)
+                .then(response => {
+                    if (!response.ok) {
+                        return response.text().then(text => {
+                            throw new Error(text || '生成失败');
+                        });
+                    }
+                    return response.text();
+                })
+                .then(data => {
+                    appendLog('✅ 订阅生成成功！\n', 'log-info');
+                    appendLog('📊 返回数据大小: ' + (data.length / 1024).toFixed(2) + ' KB\n', 'log-info');
+                })
+                .catch(error => {
+                    appendLog('❌ 生成失败: ' + error.message + '\n', 'log-error');
+                })
+                .finally(() => {
+                    isGenerating = false;
+                    generateBtn.disabled = false;
+                    generateBtn.innerHTML = '<i class="bi bi-rocket-takeoff me-2"></i>生成订阅链接';
+
+                    // 停止轮询
+                    setTimeout(() => {
+                        stopLogPolling();
+                        stopStatusPolling();
+                    }, 3000);
+                });
+        }
+
+        function startLogPolling() {
+            if (logUpdateInterval) return;
+            loadLogs();
+            logUpdateInterval = setInterval(loadLogs, 2000);
+        }
+
+        function stopLogPolling() {
+            if (logUpdateInterval) {
+                clearInterval(logUpdateInterval);
+                logUpdateInterval = null;
+            }
+        }
+
+        function startStatusPolling() {
+            if (statusUpdateInterval) return;
+            updateStatus();
+            statusUpdateInterval = setInterval(updateStatus, 1000);
+        }
+
+        function stopStatusPolling() {
+            if (statusUpdateInterval) {
+                clearInterval(statusUpdateInterval);
+                statusUpdateInterval = null;
+            }
+        }
+
+        function loadLogs() {
+            fetch('/public-api/logs')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.logs && data.logs.length > 0) {
+                        const logsContainer = document.getElementById('logs');
+                        const isScrolledToBottom = logsContainer.scrollHeight - logsContainer.clientHeight <= logsContainer.scrollTop + 1;
+
+                        logsContainer.innerHTML = '';
+                        data.logs.slice(-50).forEach(log => {
+                            const logLine = document.createElement('div');
+                            logLine.innerHTML = colorizeLog(log);
+                            logsContainer.appendChild(logLine);
+                        });
+
+                        if (isScrolledToBottom) {
+                            logsContainer.scrollTop = logsContainer.scrollHeight;
+                        }
+                    }
+                })
+                .catch(error => {
+                    console.error('加载日志失败:', error);
+                });
+        }
+
+        function updateStatus() {
+            fetch('/public-api/status')
+                .then(response => response.json())
+                .then(data => {
+                    if (data) {
+                        updateProgressBar(data.proxyCount, data.progress, data.available);
+                    }
+                })
+                .catch(error => {
+                    console.error('获取状态失败:', error);
+                });
+        }
+
+        function updateProgressBar(total, processed, available) {
+            const percentTotal = total > 0 ? (processed / total * 100).toFixed(1) : 0;
+            const percentSuccess = total > 0 ? (available / total * 100).toFixed(1) : 0;
+
+            document.getElementById('processPercent').textContent = percentTotal + '%';
+
+            const successText = document.getElementById('successText');
+            if (available > 0) {
+                successText.innerHTML = '<span class="success-highlight">' + available + '</span>/' + total;
+            } else {
+                successText.textContent = available + '/' + total;
+            }
+
+            document.getElementById('progressBarTotal').style.width = percentTotal + '%';
+            document.getElementById('progressBarSuccess').style.width = percentSuccess + '%';
+        }
+
+        function colorizeLog(log) {
+            log = log.replace(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/, '<span class="log-time">$1</span>');
+            log = log.replace(/\bINF\b/, '<span class="log-info">INF</span>');
+            log = log.replace(/\bERR\b/, '<span class="log-error">ERR</span>');
+            log = log.replace(/\bWRN\b/, '<span class="log-warn">WRN</span>');
+            log = log.replace(/\bDBG\b/, '<span class="log-debug">DBG</span>');
+            return log;
+        }
+
+        function appendLog(message, className) {
+            const logsContainer = document.getElementById('logs');
+            const logLine = document.createElement('div');
+            if (className) logLine.className = className;
+            logLine.textContent = message;
+            logsContainer.appendChild(logLine);
+            logsContainer.scrollTop = logsContainer.scrollHeight;
+        }
+
+        function copyUrl() {
+            const url = document.getElementById('resultUrl').textContent;
+            navigator.clipboard.writeText(url).then(function() {
+                const btn = event.target.closest('button');
+                const originalHTML = btn.innerHTML;
+                btn.innerHTML = '<i class="bi bi-check-circle me-1"></i>已复制';
+                setTimeout(function() {
+                    btn.innerHTML = originalHTML;
+                }, 2000);
+            });
+        }
+    </script>
+</body>
+</html>

@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -42,8 +43,18 @@ func (app *App) initHttpServer() error {
 		return fmt.Errorf("获取http监听目录失败: %w", err)
 	}
 
+	// 设置模板加载 - 动态订阅页面需要使用模板
+	router.SetHTMLTemplate(template.Must(template.New("").ParseFS(configFS, "templates/*.html")))
+
 	// 动态订阅路由 - 支持通过URL参数指定订阅链接、流媒体和导出格式
 	router.GET("/", app.dynamicSubscriptionHandler)
+
+	// 公开API - 供动态订阅页面使用，无需认证
+	publicApi := router.Group("/public-api")
+	{
+		publicApi.GET("/logs", app.getLogs)
+		publicApi.GET("/status", app.getStatus)
+	}
 
 	// 静态文件路由 - 订阅服务相关，始终启用
 	// 最初不应该不带路径，现在保持兼容
@@ -68,9 +79,6 @@ func (app *App) initHttpServer() error {
 			}
 		}
 		slog.Info("启用Web控制面板", "path", "http://ip:port/admin", "api-key", config.GlobalConfig.APIKey)
-
-		// 设置模板加载 - 只有在启用Web控制面板时才加载
-		router.SetHTMLTemplate(template.Must(template.New("").ParseFS(configFS, "templates/*.html")))
 
 		// API路由
 		api := router.Group("/api")
@@ -247,25 +255,31 @@ func GenerateSimpleKey() string {
 
 // dynamicSubscriptionHandler 动态订阅处理器
 // 支持通过URL参数指定订阅链接、流媒体应用和导出格式
-// 示例: http://localhost:8199?sub_link=https://example.com/sub&app=gemini&target=Clash&refresh=true
+// 示例: http://localhost:8199?sub_link=https://example.com/sub&app=gemini&target=Clash&refresh=true&suffix=✨
 func (app *App) dynamicSubscriptionHandler(c *gin.Context) {
 	subLink := c.Query("sub_link")
 	appFilter := c.Query("app")
 	target := c.Query("target")
 	refresh := c.Query("refresh") == "true"
+	customTag := c.Query("suffix") // 自定义标签（使用suffix参数名以匹配HTML表单）
+	if customTag == "" {
+		customTag = c.Query("tag") // 兼容tag参数
+	}
 
-	// 如果没有任何参数，返回简单的使用说明
-	if subLink == "" && appFilter == "" && target == "" {
-		c.String(http.StatusOK, "动态订阅服务\n\n使用方法:\n?sub_link=订阅链接&app=流媒体应用&target=导出格式&refresh=true\n\n支持的流媒体应用: openai, gemini, netflix, disney, youtube\n支持的导出格式: Clash, ClashMeta, V2Ray, ShadowRocket, QX, sing-box, Surge, Surfboard, URI\n\nrefresh=true: 强制刷新缓存")
+	// 如果没有任何参数，显示HTML表单页面
+	if subLink == "" && appFilter == "" && target == "" && customTag == "" {
+		c.HTML(http.StatusOK, "dynamic_sub.html", nil)
 		return
 	}
 
 	// 获取检测结果
-	results, err := app.getCheckResults(subLink, appFilter, refresh)
+	results, err := app.getCheckResults(subLink, appFilter, refresh, customTag)
 	if err != nil {
 		c.String(http.StatusInternalServerError, fmt.Sprintf("获取节点失败: %v", err))
 		return
 	}
+
+	originalCount := len(results)
 
 	// 根据流媒体应用过滤节点
 	if appFilter != "" {
@@ -273,7 +287,11 @@ func (app *App) dynamicSubscriptionHandler(c *gin.Context) {
 	}
 
 	if len(results) == 0 {
-		c.String(http.StatusOK, "没有找到符合条件的节点")
+		if appFilter != "" {
+			c.String(http.StatusOK, fmt.Sprintf("没有找到符合条件的节点\n\n检测到 %d 个可用节点，但没有支持 %s 的节点\n\n可能原因:\n1. 订阅中的节点不支持该流媒体服务\n2. 节点所在地区不支持该服务\n3. 检测时网络波动导致流媒体检测失败\n\n建议:\n- 尝试使用 refresh=true 参数重新检测\n- 检查订阅源是否提供支持该服务的节点\n- 尝试不指定 app 参数查看所有可用节点", originalCount, appFilter))
+		} else {
+			c.String(http.StatusOK, fmt.Sprintf("没有找到可用节点\n\n可能原因:\n1. 订阅链接无效或已过期\n2. 订阅中的节点全部失效\n3. 网络连接问题导致无法访问节点\n4. 节点配置格式不正确\n\n建议:\n- 检查订阅链接是否正确\n- 尝试使用 refresh=true 参数重新检测\n- 查看日志获取更详细的错误信息"))
+		}
 		return
 	}
 
@@ -302,7 +320,7 @@ func (app *App) dynamicSubscriptionHandler(c *gin.Context) {
 	// 使用Sub-Store进行格式转换
 	result, contentType, err := app.convertWithSubStore(proxies, target)
 	if err != nil {
-		c.String(http.StatusInternalServerError, fmt.Sprintf("格式转换失败: %v", err))
+		c.String(http.StatusInternalServerError, fmt.Sprintf("格式转换失败: %v\n\n可能原因:\n1. Sub-Store 服务未启动或配置错误\n2. 目标格式不支持\n3. 节点配置与目标格式不兼容\n\n建议:\n- 检查 sub-store-port 配置是否正确\n- 确认 Sub-Store 服务正在运行\n- 尝试使用其他导出格式\n- 查看 Sub-Store 日志获取详细错误", err))
 		return
 	}
 
@@ -343,29 +361,29 @@ func normalizeTarget(target string) string {
 }
 
 // getCheckResults 获取检测结果（带缓存）
-func (app *App) getCheckResults(subLink string, appFilter string, refresh bool) ([]check.Result, error) {
+func (app *App) getCheckResults(subLink string, appFilter string, refresh bool, customTag string) ([]check.Result, error) {
 	// 如果没有提供订阅链接，读取本地已保存的检测结果
 	if subLink == "" {
 		slog.Info("从本地文件读取检测结果")
 		saver, err := method.NewLocalSaver()
 		if err != nil {
-			return nil, fmt.Errorf("获取本地保存器失败: %w", err)
+			return nil, fmt.Errorf("获取本地保存器失败: %w\n\n请检查配置文件中的 output-dir 设置", err)
 		}
 
 		// 读取all.yaml文件
 		yamlFile, err := os.ReadFile(saver.OutputPath + "/all.yaml")
 		if err != nil {
-			return nil, fmt.Errorf("读取订阅文件失败: %w", err)
+			return nil, fmt.Errorf("读取订阅文件失败: %w\n\n可能原因:\n1. 尚未执行过节点检测\n2. 输出目录不存在或无权限访问\n3. all.yaml 文件已被删除\n\n建议:\n- 先执行一次完整的节点检测\n- 检查 output-dir 配置是否正确\n- 确认程序有读取该目录的权限", err)
 		}
 
 		var data map[string]any
 		if err := yaml.Unmarshal(yamlFile, &data); err != nil {
-			return nil, fmt.Errorf("解析订阅文件失败: %w", err)
+			return nil, fmt.Errorf("解析订阅文件失败: %w\n\nall.yaml 文件可能已损坏，建议重新执行节点检测", err)
 		}
 
 		proxies, ok := data["proxies"].([]any)
 		if !ok {
-			return nil, fmt.Errorf("订阅文件格式错误")
+			return nil, fmt.Errorf("订阅文件格式错误: 缺少 proxies 字段或格式不正确\n\nall.yaml 文件可能已损坏，建议重新执行节点检测")
 		}
 
 		slog.Info(fmt.Sprintf("从本地文件读取到 %d 个节点", len(proxies)))
@@ -395,6 +413,49 @@ func (app *App) getCheckResults(subLink string, appFilter string, refresh bool) 
 					}
 				}
 				results = append(results, result)
+			}
+		}
+
+		// 如果指定了自定义标签，需要重新处理节点名称
+		if customTag != "" && appFilter != "" {
+			// 为匹配的节点重新添加自定义标签
+			for i := range results {
+				result := &results[i]
+				if name, ok := result.Proxy["name"].(string); ok {
+					// 移除所有已有标签
+					name = regexp.MustCompile(`\s*\|.*$`).ReplaceAllString(name, "")
+					name = strings.TrimSpace(name)
+
+					// 根据检测结果决定是否添加自定义标签
+					var shouldAddTag bool
+					switch appFilter {
+					case "openai", "gpt":
+						shouldAddTag = result.Openai || result.OpenaiWeb
+					case "gemini", "gm":
+						shouldAddTag = result.Gemini
+					case "netflix", "nf":
+						shouldAddTag = result.Netflix
+					case "disney", "d+":
+						shouldAddTag = result.Disney
+					case "youtube", "yt":
+						shouldAddTag = result.Youtube != ""
+					case "tiktok", "tk":
+						shouldAddTag = result.TikTok != ""
+					}
+
+					if shouldAddTag {
+						// 对于 YouTube 和 TikTok，添加地区后缀
+						if (appFilter == "youtube" || appFilter == "yt") && result.Youtube != "" {
+							name += "|" + customTag + "-" + result.Youtube
+						} else if (appFilter == "tiktok" || appFilter == "tk") && result.TikTok != "" {
+							name += "|" + customTag + "-" + result.TikTok
+						} else {
+							name += "|" + customTag
+						}
+					}
+
+					result.Proxy["name"] = name
+				}
 			}
 		}
 
@@ -430,10 +491,35 @@ func (app *App) getCheckResults(subLink string, appFilter string, refresh bool) 
 	originalSubUrls := config.GlobalConfig.SubUrls
 	originalMediaCheck := config.GlobalConfig.MediaCheck
 	originalPlatforms := config.GlobalConfig.Platforms
+	originalPlatformTags := config.GlobalConfig.PlatformTags
 
 	// 设置临时配置
 	config.GlobalConfig.SubUrls = []string{subLink}
 	config.GlobalConfig.MediaCheck = true
+
+	// 如果提供了自定义标签，临时设置平台标签
+	if customTag != "" && appFilter != "" {
+		if config.GlobalConfig.PlatformTags == nil {
+			config.GlobalConfig.PlatformTags = make(map[string]string)
+		}
+		// 根据appFilter设置对应的平台标签
+		switch appFilter {
+		case "openai", "gpt":
+			config.GlobalConfig.PlatformTags["openai"] = customTag
+			config.GlobalConfig.PlatformTags["openai-web"] = customTag
+		case "gemini", "gm":
+			config.GlobalConfig.PlatformTags["gemini"] = customTag
+		case "netflix", "nf":
+			config.GlobalConfig.PlatformTags["netflix"] = customTag
+		case "disney", "d+":
+			config.GlobalConfig.PlatformTags["disney"] = customTag
+		case "youtube", "yt":
+			config.GlobalConfig.PlatformTags["youtube"] = customTag
+		case "tiktok", "tk":
+			config.GlobalConfig.PlatformTags["tiktok"] = customTag
+		}
+		slog.Info(fmt.Sprintf("临时设置自定义标签: %s = %s", appFilter, customTag))
+	}
 
 	// 根据appFilter参数决定检测哪些平台
 	var platforms []string
@@ -472,18 +558,16 @@ func (app *App) getCheckResults(subLink string, appFilter string, refresh bool) 
 	config.GlobalConfig.SubUrls = originalSubUrls
 	config.GlobalConfig.MediaCheck = originalMediaCheck
 	config.GlobalConfig.Platforms = originalPlatforms
+	config.GlobalConfig.PlatformTags = originalPlatformTags
 
 	if err != nil {
-		return nil, fmt.Errorf("检测失败: %w", err)
+		return nil, fmt.Errorf("检测失败: %w\n\n可能原因:\n1. 订阅链接无法访问\n2. 订阅内容格式错误\n3. 网络连接问题\n\n建议检查订阅链接是否正确，或查看日志获取详细错误", err)
 	}
 
 	slog.Info(fmt.Sprintf("检测完成，可用节点数: %d", len(results)))
 
 	// 打印前几个节点的流媒体支持情况
 	for i, result := range results {
-		if i >= 3 {
-			break
-		}
 		if name, ok := result.Proxy["name"].(string); ok {
 			slog.Info(fmt.Sprintf("节点 %d: %s, Gemini=%v, Netflix=%v, Disney=%v, OpenAI=%v",
 				i+1, name, result.Gemini, result.Netflix, result.Disney, result.Openai))
@@ -553,7 +637,7 @@ func (app *App) filterResultsByApp(results []check.Result, appName string) []che
 func (app *App) convertWithSubStore(proxies []map[string]any, target string) ([]byte, string, error) {
 	// 检查Sub-Store是否配置
 	if config.GlobalConfig.SubStorePort == "" {
-		return nil, "", fmt.Errorf("Sub-Store未配置，请在配置文件中设置sub-store-port")
+		return nil, "", fmt.Errorf("Sub-Store未配置\n\n请在配置文件中设置 sub-store-port 参数\n例如: sub-store-port: \"3001\"")
 	}
 
 	// 生成临时订阅YAML
@@ -604,12 +688,12 @@ func (app *App) convertWithSubStore(proxies []map[string]any, target string) ([]
 	// 发送创建请求
 	resp, err := http.Post(fmt.Sprintf("%s/api/subs", baseURL), "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
-		return nil, "", fmt.Errorf("创建临时订阅失败: %w", err)
+		return nil, "", fmt.Errorf("创建临时订阅失败: %w\n\n请检查:\n1. Sub-Store 服务是否正在运行\n2. sub-store-port 配置是否正确 (当前: %s)\n3. 防火墙是否阻止了连接", err, config.GlobalConfig.SubStorePort)
 	}
 	resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated {
-		return nil, "", fmt.Errorf("创建临时订阅失败，状态码: %d", resp.StatusCode)
+		return nil, "", fmt.Errorf("创建临时订阅失败，状态码: %d\n\nSub-Store 服务可能未正常运行或配置错误", resp.StatusCode)
 	}
 
 	// 延迟删除临时订阅
@@ -626,13 +710,13 @@ func (app *App) convertWithSubStore(proxies []map[string]any, target string) ([]
 
 	resp, err = http.Get(downloadURL)
 	if err != nil {
-		return nil, "", fmt.Errorf("获取转换后的订阅失败: %w", err)
+		return nil, "", fmt.Errorf("获取转换后的订阅失败: %w\n\n请检查 Sub-Store 服务是否正常", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, "", fmt.Errorf("获取转换后的订阅失败，状态码: %d, 错误: %s", resp.StatusCode, string(body))
+		return nil, "", fmt.Errorf("获取转换后的订阅失败，状态码: %d\n错误信息: %s\n\n可能原因:\n1. 目标格式 '%s' 不支持或拼写错误\n2. 节点配置与目标格式不兼容\n\n支持的格式: Clash, ClashMeta, V2Ray, ShadowRocket, QX, sing-box, Surge, Surfboard, URI", resp.StatusCode, string(body), target)
 	}
 
 	result, err := io.ReadAll(resp.Body)
@@ -650,4 +734,114 @@ func (app *App) convertWithSubStore(proxies []map[string]any, target string) ([]
 	}
 
 	return result, contentType, nil
+}
+
+// addPlatformTags 根据指定的平台列表为节点添加标记
+func (app *App) addPlatformTags(results []check.Result, platforms []string) []check.Result {
+	for i := range results {
+		result := &results[i]
+		if name, ok := result.Proxy["name"].(string); ok {
+			// 移除已有的流媒体标记
+			name = regexp.MustCompile(`\s*\|(?:NF|D\+|GPT⁺|GPT|GM|YT-[^|]+|TK-[^|]+|\d+%)`).ReplaceAllString(name, "")
+			name = strings.TrimSpace(name)
+
+			var tags []string
+
+			// 按指定的平台顺序添加标记
+			for _, plat := range platforms {
+				switch plat {
+				case "openai", "gpt":
+					if result.Openai {
+						tags = append(tags, config.GetPlatformTag("openai", "GPT⁺"))
+					} else if result.OpenaiWeb {
+						tags = append(tags, config.GetPlatformTag("openai-web", "GPT"))
+					}
+				case "netflix", "nf":
+					if result.Netflix {
+						tags = append(tags, config.GetPlatformTag("netflix", "NF"))
+					}
+				case "disney", "d+":
+					if result.Disney {
+						tags = append(tags, config.GetPlatformTag("disney", "D+"))
+					}
+				case "gemini", "gm":
+					if result.Gemini {
+						tags = append(tags, config.GetPlatformTag("gemini", "GM"))
+					}
+				case "youtube", "yt":
+					if result.Youtube != "" {
+						tagPrefix := config.GetPlatformTag("youtube", "YT")
+						tags = append(tags, fmt.Sprintf("%s-%s", tagPrefix, result.Youtube))
+					}
+				case "tiktok", "tk":
+					if result.TikTok != "" {
+						tagPrefix := config.GetPlatformTag("tiktok", "TK")
+						tags = append(tags, fmt.Sprintf("%s-%s", tagPrefix, result.TikTok))
+					}
+				}
+			}
+
+			// 将标记添加到名称中
+			if len(tags) > 0 {
+				name += "|" + strings.Join(tags, "|")
+			}
+
+			result.Proxy["name"] = name
+		}
+	}
+	return results
+}
+
+// addCustomPlatformTags 使用自定义标签为节点添加标记
+func (app *App) addCustomPlatformTags(results []check.Result, appFilter string, customTag string) []check.Result {
+	for i := range results {
+		result := &results[i]
+		if name, ok := result.Proxy["name"].(string); ok {
+			// 移除已有的流媒体标记
+			name = regexp.MustCompile(`\s*\|(?:NF|D\+|GPT⁺|GPT|GM|YT-[^|]+|TK-[^|]+|\d+%)`).ReplaceAllString(name, "")
+			// 也移除可能的自定义标签（emoji等）
+			name = regexp.MustCompile(`\s*\|[^|]+`).ReplaceAllString(name, "")
+			name = strings.TrimSpace(name)
+
+			var tag string
+
+			// 根据appFilter和检测结果决定是否添加标签
+			switch appFilter {
+			case "openai", "gpt":
+				if result.Openai || result.OpenaiWeb {
+					tag = customTag
+				}
+			case "netflix", "nf":
+				if result.Netflix {
+					tag = customTag
+				}
+			case "disney", "d+":
+				if result.Disney {
+					tag = customTag
+				}
+			case "gemini", "gm":
+				if result.Gemini {
+					tag = customTag
+				}
+			case "youtube", "yt":
+				if result.Youtube != "" {
+					// YouTube 需要添加地区后缀
+					tag = fmt.Sprintf("%s-%s", customTag, result.Youtube)
+				}
+			case "tiktok", "tk":
+				if result.TikTok != "" {
+					// TikTok 需要添加地区后缀
+					tag = fmt.Sprintf("%s-%s", customTag, result.TikTok)
+				}
+			}
+
+			// 将标记添加到名称中
+			if tag != "" {
+				name += "|" + tag
+			}
+
+			result.Proxy["name"] = name
+		}
+	}
+	return results
 }

@@ -88,6 +88,18 @@ platforms:
   - openai
   - gemini
 
+# 自定义平台标签后缀（可选）
+# 如果不配置，则使用默认标签
+# 默认标签: openai=GPT⁺, openai-web=GPT, netflix=NF, disney=D+, gemini=GM, youtube=YT, tiktok=TK
+platform-tags:
+  # openai: "🤖"        # OpenAI API 可用
+  # openai-web: "💬"   # OpenAI Web 可用
+  # netflix: "🎬"      # Netflix 可用
+  # disney: "🏰"       # Disney+ 可用
+  # gemini: "✨"       # Gemini 可用
+  # youtube: "📺"      # YouTube Premium 可用（会自动添加地区后缀，如: 📺-US）
+  # tiktok: "🎵"       # TikTok 可用（会自动添加地区后缀，如: 🎵-US）
+
 # 保留之前测试成功的节点
 # 如果为true，则保留之前测试成功的节点，这样就不会因为上游链接更新，导致可用的节点被清除掉
 keep-success-proxies: false

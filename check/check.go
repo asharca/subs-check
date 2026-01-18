@@ -316,21 +316,21 @@ func (pc *ProxyChecker) updateProxyName(res *Result, httpClient *ProxyClient, sp
 		switch plat {
 		case "openai":
 			if res.Openai {
-				tags = append(tags, "GPT⁺")
+				tags = append(tags, config.GetPlatformTag("openai", "GPT⁺"))
 			} else if res.OpenaiWeb {
-				tags = append(tags, "GPT")
+				tags = append(tags, config.GetPlatformTag("openai-web", "GPT"))
 			}
 		case "netflix":
 			if res.Netflix {
-				tags = append(tags, "NF")
+				tags = append(tags, config.GetPlatformTag("netflix", "NF"))
 			}
 		case "disney":
 			if res.Disney {
-				tags = append(tags, "D+")
+				tags = append(tags, config.GetPlatformTag("disney", "D+"))
 			}
 		case "gemini":
 			if res.Gemini {
-				tags = append(tags, "GM")
+				tags = append(tags, config.GetPlatformTag("gemini", "GM"))
 			}
 		case "iprisk":
 			if res.IPRisk != "" {
@@ -338,11 +338,13 @@ func (pc *ProxyChecker) updateProxyName(res *Result, httpClient *ProxyClient, sp
 			}
 		case "youtube":
 			if res.Youtube != "" {
-				tags = append(tags, fmt.Sprintf("YT-%s", res.Youtube))
+				tagPrefix := config.GetPlatformTag("youtube", "YT")
+				tags = append(tags, fmt.Sprintf("%s-%s", tagPrefix, res.Youtube))
 			}
 		case "tiktok":
 			if res.TikTok != "" {
-				tags = append(tags, fmt.Sprintf("TK-%s", res.TikTok))
+				tagPrefix := config.GetPlatformTag("tiktok", "TK")
+				tags = append(tags, fmt.Sprintf("%s-%s", tagPrefix, res.TikTok))
 			}
 		}
 	}
