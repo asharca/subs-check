@@ -339,6 +339,8 @@ func normalizeTarget(target string) string {
 		return "ClashMeta"
 	case "mihomo":
 		return "mihomo" // 特殊处理，使用小写
+	case "openwrt":
+		return "openwrt" // 特殊处理，基于 mihomo 添加 OpenWrt 配置
 	case "v2ray":
 		return "V2Ray"
 	case "shadowrocket":
@@ -708,8 +710,8 @@ func (app *App) convertWithSubStore(proxies []map[string]any, target string) ([]
 	var downloadURL string
 	var contentType string
 
-	// mihomo 格式需要特殊处理，需要创建 file 而不是 sub
-	if target == "mihomo" {
+	// mihomo 和 openwrt 格式需要特殊处理，需要创建 file 而不是 sub
+	if target == "mihomo" || target == "openwrt" {
 		// 创建临时 mihomo file
 		tempFileName := fmt.Sprintf("temp_mihomo_%d", time.Now().UnixNano())
 
@@ -790,12 +792,28 @@ func (app *App) convertWithSubStore(proxies []map[string]any, target string) ([]
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, "", fmt.Errorf("获取转换后的订阅失败，状态码: %d\n错误信息: %s\n\n可能原因:\n1. 目标格式 '%s' 不支持或拼写错误\n2. 节点配置与目标格式不兼容\n3. mihomo 格式需要配置 mihomo-overwrite-url\n\n支持的格式: Clash, ClashMeta, Mihomo, V2Ray, ShadowRocket, QX, sing-box, Surge, Surfboard, URI", resp.StatusCode, string(body), target)
+		return nil, "", fmt.Errorf("获取转换后的订阅失败，状态码: %d\n错误信息: %s\n\n可能原因:\n1. 目标格式 '%s' 不支持或拼写错误\n2. 节点配置与目标格式不兼容\n3. mihomo/openwrt 格式需要配置 mihomo-overwrite-url\n\n支持的格式: Clash, ClashMeta, Mihomo, OpenWrt, V2Ray, ShadowRocket, QX, sing-box, Surge, Surfboard, URI", resp.StatusCode, string(body), target)
 	}
 
 	result, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, "", fmt.Errorf("读取转换结果失败: %w", err)
+	}
+
+	// 如果是 openwrt 格式，在顶部添加 OpenWrt 基础配置
+	if target == "openwrt" {
+		openWrtHeader := `# --- 基础设置开始 ---
+port: 7890
+socks-port: 7891
+mixed-port: 7893 # 混合端口(HTTP+SOCKS)，OpenWrt常用
+allow-lan: true # 允许局域网设备连接
+mode: Rule # 模式：Rule(规则) / Global(全局) / Direct(直连)
+log-level: info # 日志等级
+external-controller: :9090 # 外部控制端口
+# --- 基础设置结束 ---
+
+`
+		result = append([]byte(openWrtHeader), result...)
 	}
 
 	return result, contentType, nil
