@@ -4,7 +4,7 @@ import "net/http"
 
 func CheckNetflix(httpClient *http.Client) (bool, error) {
 	// https://www.netflix.com/title/81280792
-	req, err := http.NewRequest("GET", "https://www.netflix.com/title/81280792", nil)
+	req, err := http.NewRequest("GET", "https://www.netflix.com/title/70217913", nil)
 	if err != nil {
 		return false, err
 	}

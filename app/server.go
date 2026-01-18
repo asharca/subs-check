@@ -337,6 +337,8 @@ func normalizeTarget(target string) string {
 		return "Clash"
 	case "clashmeta":
 		return "ClashMeta"
+	case "mihomo":
+		return "mihomo" // 特殊处理，使用小写
 	case "v2ray":
 		return "V2Ray"
 	case "shadowrocket":
@@ -703,9 +705,81 @@ func (app *App) convertWithSubStore(proxies []map[string]any, target string) ([]
 	}()
 
 	// 请求转换后的订阅
-	downloadURL := fmt.Sprintf("%s/download/%s", baseURL, tempSubName)
-	if target != "" {
-		downloadURL = fmt.Sprintf("%s?target=%s", downloadURL, target)
+	var downloadURL string
+	var contentType string
+
+	// mihomo 格式需要特殊处理，需要创建 file 而不是 sub
+	if target == "mihomo" {
+		// 创建临时 mihomo file
+		tempFileName := fmt.Sprintf("temp_mihomo_%d", time.Now().UnixNano())
+
+		// mihomo file 需要 Script Operator，但对于动态订阅我们可以使用空配置或默认配置
+		// 如果用户配置了 mihomo-overwrite-url，使用它；否则使用空配置
+		var processConfig []map[string]any
+		if config.GlobalConfig.MihomoOverwriteUrl != "" {
+			processConfig = []map[string]any{
+				{
+					"type": "Script Operator",
+					"args": map[string]any{
+						"mode":    "link",
+						"content": config.GlobalConfig.MihomoOverwriteUrl,
+					},
+					"disabled": false,
+				},
+			}
+		} else {
+			// 使用空的 process，让 Sub-Store 生成基础的 mihomo 配置
+			processConfig = []map[string]any{}
+		}
+
+		fileData := map[string]any{
+			"name":       tempFileName,
+			"remark":     "临时mihomo配置",
+			"source":     "local",
+			"sourceName": tempSubName,
+			"sourceType": "subscription",
+			"type":       "mihomoProfile",
+			"process":    processConfig,
+		}
+
+		fileJsonData, err := json.Marshal(fileData)
+		if err != nil {
+			return nil, "", fmt.Errorf("序列化mihomo文件数据失败: %w", err)
+		}
+
+		// 创建 mihomo file
+		resp, err := http.Post(fmt.Sprintf("%s/api/files", baseURL), "application/json", bytes.NewBuffer(fileJsonData))
+		if err != nil {
+			return nil, "", fmt.Errorf("创建临时mihomo文件失败: %w", err)
+		}
+		resp.Body.Close()
+
+		if resp.StatusCode != http.StatusCreated {
+			body, _ := io.ReadAll(resp.Body)
+			return nil, "", fmt.Errorf("创建临时mihomo文件失败，状态码: %d，错误: %s", resp.StatusCode, string(body))
+		}
+
+		// 延迟删除临时 mihomo file
+		defer func() {
+			req, _ := http.NewRequest(http.MethodDelete, fmt.Sprintf("%s/api/file/%s", baseURL, tempFileName), nil)
+			http.DefaultClient.Do(req)
+		}()
+
+		downloadURL = fmt.Sprintf("%s/api/file/%s", baseURL, tempFileName)
+		contentType = "text/yaml; charset=utf-8"
+	} else {
+		downloadURL = fmt.Sprintf("%s/download/%s", baseURL, tempSubName)
+		if target != "" {
+			downloadURL = fmt.Sprintf("%s?target=%s", downloadURL, target)
+		}
+		// 根据target确定Content-Type
+		contentType = "text/plain; charset=utf-8"
+		switch target {
+		case "Clash", "ClashMeta":
+			contentType = "text/yaml; charset=utf-8"
+		case "sing-box":
+			contentType = "application/json; charset=utf-8"
+		}
 	}
 
 	resp, err = http.Get(downloadURL)
@@ -716,21 +790,12 @@ func (app *App) convertWithSubStore(proxies []map[string]any, target string) ([]
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, "", fmt.Errorf("获取转换后的订阅失败，状态码: %d\n错误信息: %s\n\n可能原因:\n1. 目标格式 '%s' 不支持或拼写错误\n2. 节点配置与目标格式不兼容\n\n支持的格式: Clash, ClashMeta, V2Ray, ShadowRocket, QX, sing-box, Surge, Surfboard, URI", resp.StatusCode, string(body), target)
+		return nil, "", fmt.Errorf("获取转换后的订阅失败，状态码: %d\n错误信息: %s\n\n可能原因:\n1. 目标格式 '%s' 不支持或拼写错误\n2. 节点配置与目标格式不兼容\n3. mihomo 格式需要配置 mihomo-overwrite-url\n\n支持的格式: Clash, ClashMeta, Mihomo, V2Ray, ShadowRocket, QX, sing-box, Surge, Surfboard, URI", resp.StatusCode, string(body), target)
 	}
 
 	result, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, "", fmt.Errorf("读取转换结果失败: %w", err)
-	}
-
-	// 根据target确定Content-Type
-	contentType := "text/plain; charset=utf-8"
-	switch target {
-	case "Clash", "ClashMeta":
-		contentType = "text/yaml; charset=utf-8"
-	case "sing-box":
-		contentType = "application/json; charset=utf-8"
 	}
 
 	return result, contentType, nil
