@@ -292,25 +292,57 @@ func (app *App) dynamicSubscriptionHandler(c *gin.Context) {
 	}
 
 	originalCount := len(results)
+	originalResults := results // 保存原始结果
 
 	// 根据流媒体应用过滤节点
+	var filteredResults []check.Result
 	if appFilter != "" {
-		results = app.filterResultsByApp(results, appFilter)
-	}
-
-	if len(results) == 0 {
-		if appFilter != "" {
-			c.String(http.StatusOK, fmt.Sprintf("没有找到符合条件的节点\n\n检测到 %d 个可用节点，但没有支持 %s 的节点\n\n可能原因:\n1. 订阅中的节点不支持该流媒体服务\n2. 节点所在地区不支持该服务\n3. 检测时网络波动导致流媒体检测失败\n\n建议:\n- 尝试使用 refresh=true 参数重新检测\n- 检查订阅源是否提供支持该服务的节点\n- 尝试不指定 app 参数查看所有可用节点", originalCount, appFilter))
-		} else {
-			c.String(http.StatusOK, fmt.Sprintf("没有找到可用节点\n\n可能原因:\n1. 订阅链接无效或已过期\n2. 订阅中的节点全部失效\n3. 网络连接问题导致无法访问节点\n4. 节点配置格式不正确\n\n建议:\n- 检查订阅链接是否正确\n- 尝试使用 refresh=true 参数重新检测\n- 查看日志获取更详细的错误信息"))
-		}
-		return
+		filteredResults = app.filterResultsByApp(results, appFilter)
+	} else {
+		filteredResults = results
 	}
 
 	// 提取节点列表
-	proxies := make([]map[string]any, 0, len(results))
-	for _, result := range results {
-		proxies = append(proxies, result.Proxy)
+	proxies := make([]map[string]any, 0)
+
+	// 如果过滤后没有符合条件的节点，但有可用节点
+	if len(filteredResults) == 0 && originalCount > 0 && appFilter != "" {
+		// 返回所有可用节点
+		for _, result := range originalResults {
+			proxies = append(proxies, result.Proxy)
+		}
+
+		// 添加一个假节点作为提示信息
+		noticeProxy := map[string]any{
+			"name":     fmt.Sprintf("⚠️ 没有支持 %s 的节点", appFilter),
+			"type":     "ss",
+			"server":   "127.0.0.1",
+			"port":     1080,
+			"cipher":   "aes-128-gcm",
+			"password": "notice",
+			"udp":      false,
+		}
+		proxies = append([]map[string]any{noticeProxy}, proxies...)
+
+	} else if len(filteredResults) == 0 && originalCount == 0 {
+		// 完全没有可用节点
+		noticeProxy := map[string]any{
+			"name":     "⚠️ 没有找到可用节点",
+			"type":     "ss",
+			"server":   "127.0.0.1",
+			"port":     1080,
+			"cipher":   "aes-128-gcm",
+			"password": "notice",
+			"udp":      false,
+		}
+		proxies = append(proxies, noticeProxy)
+
+	} else {
+		// 有符合条件的节点，正常返回
+		for _, result := range filteredResults {
+			proxies = append(proxies, result.Proxy)
+		}
+		results = filteredResults
 	}
 
 	// 如果没有指定target，返回YAML格式
