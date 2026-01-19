@@ -34,6 +34,7 @@ type Result struct {
 	Cloudflare bool
 	Disney     bool
 	Gemini     bool
+	Claude     bool
 	TikTok     string
 	IP         string
 	IPRisk     string
@@ -251,6 +252,10 @@ func (pc *ProxyChecker) checkProxy(proxy map[string]any) *Result {
 				if ok, _ := platform.CheckGemini(mediaClient); ok {
 					res.Gemini = true
 				}
+			case "claude":
+				if ok, _ := platform.CheckClaude(mediaClient); ok {
+					res.Claude = true
+				}
 			case "iprisk":
 				country, ip := proxyutils.GetProxyCountry(mediaClient)
 				if ip == "" {
@@ -308,7 +313,7 @@ func (pc *ProxyChecker) updateProxyName(res *Result, httpClient *ProxyClient, sp
 
 	if config.GlobalConfig.MediaCheck {
 		// 移除已有的标记（IPRisk和平台标记）
-		name = regexp.MustCompile(`\s*\|(?:NF|D\+|GPT⁺|GPT|GM|YT-[^|]+|TK-[^|]+|\d+%)`).ReplaceAllString(name, "")
+		name = regexp.MustCompile(`\s*\|(?:NF|D\+|GPT⁺|GPT|GM|CL|YT-[^|]+|TK-[^|]+|\d+%)`).ReplaceAllString(name, "")
 	}
 
 	// 按用户输入顺序定义
@@ -331,6 +336,10 @@ func (pc *ProxyChecker) updateProxyName(res *Result, httpClient *ProxyClient, sp
 		case "gemini":
 			if res.Gemini {
 				tags = append(tags, config.GetPlatformTag("gemini", "GM"))
+			}
+		case "claude":
+			if res.Claude {
+				tags = append(tags, config.GetPlatformTag("claude", "CL"))
 			}
 		case "iprisk":
 			if res.IPRisk != "" {

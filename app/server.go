@@ -451,6 +451,7 @@ func (app *App) getCheckResults(subLink string, appFilter string, refresh bool, 
 					result.Openai = strings.Contains(name, "GPT⁺")
 					result.OpenaiWeb = strings.Contains(name, "GPT")
 					result.Gemini = strings.Contains(name, "GM")
+					result.Claude = strings.Contains(name, "CL")
 					result.Netflix = strings.Contains(name, "NF")
 					result.Disney = strings.Contains(name, "D+")
 					if idx := strings.Index(name, "YT-"); idx >= 0 {
@@ -503,6 +504,10 @@ func (app *App) getCheckResults(subLink string, appFilter string, refresh bool, 
 							}
 						case "gemini", "gm":
 							if result.Gemini {
+								tags = append(tags, tag)
+							}
+						case "claude", "cl":
+							if result.Claude {
 								tags = append(tags, tag)
 							}
 						case "netflix", "nf":
@@ -689,6 +694,10 @@ func (app *App) filterResultsByApp(results []check.Result, appName string) []che
 				}
 			case "gemini", "gm":
 				if result.Gemini {
+					matched = true
+				}
+			case "claude", "cl":
+				if result.Claude {
 					matched = true
 				}
 			case "netflix", "nf":
