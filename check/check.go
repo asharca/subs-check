@@ -198,20 +198,24 @@ func (pc *ProxyChecker) checkProxy(proxy map[string]any) *Result {
 	httpClient := CreateClient(proxy)
 	if httpClient == nil {
 		slog.Debug(fmt.Sprintf("创建代理Client失败: %v", proxy["name"]))
-		return nil
+		// 返回节点但标记为不可用
+		return res
 	}
-	defer httpClient.Close()
 
 	google, err := platform.CheckAlive(httpClient.Client)
 	if err != nil || !google {
-		return nil
+		httpClient.Close()
+		// 返回节点但标记为不可用
+		return res
 	}
+	defer httpClient.Close()
 
 	var speed int
 	if config.GlobalConfig.SpeedTestUrl != "" {
 		speed, _, err = platform.CheckSpeed(httpClient.Client, Bucket, httpClient.BytesRead)
 		if err != nil || speed < config.GlobalConfig.MinSpeed {
-			return nil
+			// 返回节点但标记为不可用
+			return res
 		}
 	}
 

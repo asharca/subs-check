@@ -309,58 +309,15 @@ func (app *App) dynamicSubscriptionHandler(c *gin.Context) {
 		return
 	}
 
-	originalCount := len(results)
-	originalResults := results // 保存原始结果
-
-	// 根据流媒体应用过滤节点
-	var filteredResults []check.Result
-	if appFilter != "" {
-		filteredResults = app.filterResultsByApp(results, appFilter)
-	} else {
-		filteredResults = results
-	}
+	// 不再过滤节点，返回所有节点（包括不可用的）
+	// 如果指定了 appFilter，只是用来添加流媒体标签，不用来过滤节点
 
 	// 提取节点列表
 	proxies := make([]map[string]any, 0)
 
-	// 如果过滤后没有符合条件的节点，但有可用节点
-	if len(filteredResults) == 0 && originalCount > 0 && appFilter != "" {
-		// 返回所有可用节点
-		for _, result := range originalResults {
-			proxies = append(proxies, result.Proxy)
-		}
-
-		// 添加一个假节点作为提示信息
-		noticeProxy := map[string]any{
-			"name":     fmt.Sprintf("⚠️ 没有支持 %s 的节点", appFilter),
-			"type":     "ss",
-			"server":   "127.0.0.1",
-			"port":     1080,
-			"cipher":   "aes-128-gcm",
-			"password": "notice",
-			"udp":      false,
-		}
-		proxies = append([]map[string]any{noticeProxy}, proxies...)
-
-	} else if len(filteredResults) == 0 && originalCount == 0 {
-		// 完全没有可用节点
-		noticeProxy := map[string]any{
-			"name":     "⚠️ 没有找到可用节点",
-			"type":     "ss",
-			"server":   "127.0.0.1",
-			"port":     1080,
-			"cipher":   "aes-128-gcm",
-			"password": "notice",
-			"udp":      false,
-		}
-		proxies = append(proxies, noticeProxy)
-
-	} else {
-		// 有符合条件的节点，正常返回
-		for _, result := range filteredResults {
-			proxies = append(proxies, result.Proxy)
-		}
-		results = filteredResults
+	// 返回所有节点（不管是否可用，是否支持流媒体）
+	for _, result := range results {
+		proxies = append(proxies, result.Proxy)
 	}
 
 	// 如果没有指定target，返回YAML格式
@@ -611,6 +568,8 @@ func (app *App) getCheckResults(subLink string, appFilter string, refresh bool, 
 				platformSet["openai"] = true
 			case "gemini", "gm":
 				platformSet["gemini"] = true
+			case "claude", "cl":
+				platformSet["claude"] = true
 			case "netflix", "nf":
 				platformSet["netflix"] = true
 			case "disney", "d+":
@@ -627,7 +586,7 @@ func (app *App) getCheckResults(subLink string, appFilter string, refresh bool, 
 
 		// 如果没有识别到任何有效平台，检测所有平台
 		if len(platformSet) == 0 {
-			platforms = []string{"openai", "youtube", "netflix", "disney", "gemini", "tiktok"}
+			platforms = []string{"openai", "youtube", "netflix", "disney", "gemini", "claude", "tiktok"}
 		} else {
 			// 转换为切片
 			for platform := range platformSet {
@@ -636,7 +595,7 @@ func (app *App) getCheckResults(subLink string, appFilter string, refresh bool, 
 		}
 	} else {
 		// 如果没有指定app，检测所有平台
-		platforms = []string{"openai", "youtube", "netflix", "disney", "gemini", "tiktok"}
+		platforms = []string{"openai", "youtube", "netflix", "disney", "gemini", "claude", "tiktok"}
 	}
 
 	config.GlobalConfig.Platforms = platforms
@@ -1113,7 +1072,7 @@ func (app *App) addMultiPlatformTagsWithMap(results []check.Result, appFilter st
 		result := &results[i]
 		if name, ok := result.Proxy["name"].(string); ok {
 			// 移除已有的流媒体标记
-			name = regexp.MustCompile(`\s*\|(?:NF|D\+|GPT⁺|GPT|GM|YT-[^|]+|TK-[^|]+|\d+%)`).ReplaceAllString(name, "")
+			name = regexp.MustCompile(`\s*\|(?:NF|D\+|GPT⁺|GPT|GM|CL|YT-[^|]+|TK-[^|]+|\d+%)`).ReplaceAllString(name, "")
 			name = strings.TrimSpace(name)
 
 			// 收集该节点支持的所有平台标签
@@ -1142,6 +1101,10 @@ func (app *App) addMultiPlatformTagsWithMap(results []check.Result, appFilter st
 					}
 				case "gemini", "gm":
 					if result.Gemini {
+						tags = append(tags, tag)
+					}
+				case "claude", "cl":
+					if result.Claude {
 						tags = append(tags, tag)
 					}
 				case "netflix", "nf":
