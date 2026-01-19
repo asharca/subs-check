@@ -405,10 +405,11 @@
                 cb.checked = checkbox.checked;
             });
 
-            // 如果是全选，将所有标签设为 §tag§
+            // 如果是全选，将每个平台的标签设为 §平台名§
             if (checkbox.checked) {
                 document.querySelectorAll('.platform-tag-input').forEach(input => {
-                    input.value = '§tag§';
+                    const platform = input.getAttribute('data-platform');
+                    input.value = '§' + platform + '§';
                 });
             }
         }
@@ -445,8 +446,8 @@
                     const tagValue = tagInput.value.trim();
                     platformTags[platform] = tagValue;
 
-                    // 检查是否所有标签都是 §tag§
-                    if (tagValue !== '§tag§') {
+                    // 检查标签是否是默认的 §平台名§ 格式
+                    if (tagValue !== '§' + platform + '§') {
                         allTagsAreDefault = false;
                     }
                 }
@@ -464,7 +465,7 @@
 
             if (subLink) params.append('sub_link', subLink);
 
-            // 如果所有平台都选中且标签都是 §tag§，使用 app=all（不传 tags 参数）
+            // 如果所有平台都选中且标签都是默认的 §平台名§ 格式，使用 app=all（不传 tags 参数）
             if (allSelected && allTagsAreDefault && selectedPlatforms.length === allPlatforms.length) {
                 params.append('app', 'all');
             } else if (selectedPlatforms.length > 0) {
