@@ -404,6 +404,13 @@
             platformCheckboxes.forEach(cb => {
                 cb.checked = checkbox.checked;
             });
+
+            // 如果是全选，将所有标签设为 §tag§
+            if (checkbox.checked) {
+                document.querySelectorAll('.platform-tag-input').forEach(input => {
+                    input.value = '§tag§';
+                });
+            }
         }
 
         // 监听平台复选框变化（不再需要自动更新后缀，因为每个平台有独立的标签输入框）
@@ -424,6 +431,9 @@
             // 收集选中的平台及其自定义标签
             const selectedPlatforms = [];
             const platformTags = {};
+            const allPlatforms = ['gemini', 'claude', 'openai', 'netflix', 'disney', 'youtube', 'tiktok'];
+            let allSelected = true;
+            let allTagsAreDefault = true;
 
             document.querySelectorAll('.platform-checkbox:checked').forEach(cb => {
                 const platform = cb.value;
@@ -432,7 +442,20 @@
                 // 获取对应的标签输入框
                 const tagInput = document.querySelector(`.platform-tag-input[data-platform="${platform}"]`);
                 if (tagInput && tagInput.value.trim()) {
-                    platformTags[platform] = tagInput.value.trim();
+                    const tagValue = tagInput.value.trim();
+                    platformTags[platform] = tagValue;
+
+                    // 检查是否所有标签都是 §tag§
+                    if (tagValue !== '§tag§') {
+                        allTagsAreDefault = false;
+                    }
+                }
+            });
+
+            // 检查是否所有平台都被选中
+            allPlatforms.forEach(platform => {
+                if (!selectedPlatforms.includes(platform)) {
+                    allSelected = false;
                 }
             });
 
@@ -440,7 +463,11 @@
             const refresh = document.getElementById('refresh').checked;
 
             if (subLink) params.append('sub_link', subLink);
-            if (selectedPlatforms.length > 0) {
+
+            // 如果所有平台都选中且标签都是 §tag§，使用 app=all（不传 tags 参数）
+            if (allSelected && allTagsAreDefault && selectedPlatforms.length === allPlatforms.length) {
+                params.append('app', 'all');
+            } else if (selectedPlatforms.length > 0) {
                 params.append('app', selectedPlatforms.join(','));
                 // 将平台标签编码为 JSON 字符串
                 if (Object.keys(platformTags).length > 0) {

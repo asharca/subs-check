@@ -278,6 +278,16 @@ func (app *App) dynamicSubscriptionHandler(c *gin.Context) {
 		customTag = c.Query("tag")
 	}
 
+	// 当 app=all 且没有提供任何标签时，为所有平台设置默认标签 §tag§
+	if appFilter == "all" && tagsJSON == "" && customTag == "" {
+		customTag = "§tag§"
+	}
+
+	// 如果 app=all，展开为所有支持的平台
+	if appFilter == "all" {
+		appFilter = "openai,gemini,claude,netflix,disney,youtube,tiktok"
+	}
+
 	// 如果没有任何参数，显示HTML表单页面
 	if subLink == "" && appFilter == "" && target == "" && tagsJSON == "" && customTag == "" {
 		c.HTML(http.StatusOK, "dynamic_sub.html", nil)
