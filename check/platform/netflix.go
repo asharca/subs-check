@@ -3,170 +3,88 @@ package platform
 import (
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 )
 
-// Netflix 检测常量 - 参考 netflix-verify 项目
-const (
-	// 地区可用 ID - 用于检测地区是否开通 Netflix 服务
-	AreaAvailableID = 80018499
-	// 自制剧 ID - 用于检测是否解锁自制内容
-	SelfMadeAvailableID = 80197526
-	// 非自制剧 ID - 用于检测是否解锁第三方版权内容（完全解锁的标志）
-	NonSelfMadeAvailableID = 70143836
-)
-
-// Netflix 解锁状态
-const (
-	NetworkUnreachable      = -2 // 网络不可达
-	AreaUnavailable         = -1 // 地区不可用
-	AreaAvailable           = 0  // 地区可用但未解锁
-	UnblockSelfMadeMovie    = 1  // 解锁自制剧
-	UnblockNonSelfMadeMovie = 2  // 解锁非自制剧（完全解锁）
-)
-
-// UnblockTestResult 解锁测试结果
-type UnblockTestResult struct {
-	movieID   int
-	available bool
-	err       error
-}
-
-// CheckNetflix 检测 Netflix 是否完全解锁（能看非自制剧）
-// 返回 true 表示完全解锁，可以观看所有影片（包括第三方版权内容）
-// 参考 netflix-verify 项目的检测逻辑
 func CheckNetflix(httpClient *http.Client) (bool, error) {
-	unblockStatus := AreaUnavailable
-	testChan := make(chan UnblockTestResult, 3)
-
-	// 并发检测三个影片 ID
-	go unblockTest(httpClient, AreaAvailableID, testChan)
-	go unblockTest(httpClient, SelfMadeAvailableID, testChan)
-	go unblockTest(httpClient, NonSelfMadeAvailableID, testChan)
-
-	// 收集三个测试结果
-	var firstError error
-	for i := 0; i < 3; i++ {
-		res := <-testChan
-
-		// 记录第一个错误，但继续接收其他结果，避免 goroutine 泄漏
-		if res.err != nil && firstError == nil {
-			firstError = res.err
-		}
-
-		// 根据测试结果更新解锁状态
-		if res.available {
-			switch res.movieID {
-			case AreaAvailableID:
-				// 地区可用
-				if unblockStatus < AreaAvailable {
-					unblockStatus = AreaAvailable
-				}
-			case SelfMadeAvailableID:
-				// 解锁自制剧
-				if unblockStatus < UnblockSelfMadeMovie {
-					unblockStatus = UnblockSelfMadeMovie
-				}
-			case NonSelfMadeAvailableID:
-				// 解锁非自制剧（完全解锁）
-				if unblockStatus < UnblockNonSelfMadeMovie {
-					unblockStatus = UnblockNonSelfMadeMovie
-				}
-			}
-		}
+	// Test with LEGO Ninjago (title 81280792)
+	result1, err1 := checkNetflixTitle(httpClient, "81280792")
+	if err1 != nil {
+		return false, err1
 	}
 
-	close(testChan)
-
-	// 如果有错误，返回错误
-	if firstError != nil {
-		return false, firstError
+	// Test with Breaking Bad (title 70143836)
+	result2, err2 := checkNetflixTitle(httpClient, "70143836")
+	if err2 != nil {
+		return false, err2
 	}
 
-	// 只有达到 UnblockNonSelfMadeMovie 状态才算完全解锁
-	// 这意味着可以观看所有影片，包括第三方版权内容
-	return unblockStatus >= UnblockNonSelfMadeMovie, nil
+	// If both show "Oh no!" message, it's Originals Only
+	if strings.Contains(result1, "Oh no!") && strings.Contains(result2, "Oh no!") {
+		return false, nil
+	}
+
+	// If either one is accessible (no "Oh no!"), Netflix is unlocked
+	if !strings.Contains(result1, "Oh no!") || !strings.Contains(result2, "Oh no!") {
+		return true, nil
+	}
+
+	return false, nil
 }
 
-// unblockTest 测试指定影片是否可访问
-func unblockTest(httpClient *http.Client, movieID int, resultChan chan UnblockTestResult) {
-	url := "https://www.netflix.com/title/" + intToString(movieID)
-
+func checkNetflixTitle(httpClient *http.Client, titleID string) (string, error) {
+	url := "https://www.netflix.com/title/" + titleID
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		resultChan <- UnblockTestResult{movieID, false, err}
-		return
+		return "", err
 	}
 
-	// 设置请求头，模拟真实浏览器
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	// Set comprehensive headers to mimic browser behavior
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36 Edg/135.0.0.0")
+	req.Header.Set("Sec-Ch-Ua", `"Microsoft Edge";v="135", "Not-A.Brand";v="8", "Chromium";v="135"`)
+	req.Header.Set("Sec-Ch-Ua-Mobile", "?0")
+	req.Header.Set("Sec-Ch-Ua-Platform", `"Windows"`)
+	req.Header.Set("Sec-Fetch-Dest", "document")
+	req.Header.Set("Sec-Fetch-Mode", "navigate")
+	req.Header.Set("Sec-Fetch-Site", "none")
+	req.Header.Set("Sec-Fetch-User", "?1")
+	req.Header.Set("Upgrade-Insecure-Requests", "1")
+	req.Header.Set("Priority", "u=0, i")
+
+	// Set cookies to simulate authenticated session
+	cookies := []string{
+		"flwssn=d2c72c47-49e9-48da-b7a2-2dc6d7ca9fcf",
+		"nfvdid=BQFmAAEBEMZa4XMYVzVGf9-kQ1HXumtAKsCyuBZU4QStC6CGEGIVznjNuuTerLAG8v2-9V_kYhg5uxTB5_yyrmqc02U5l1Ts74Qquezc9AE-LZKTo3kY3g%3D%3D",
+		"SecureNetflixId=v%3D3%26mac%3DAQEAEQABABSQHKcR1d0sLV0WTu0lL-BO63TKCCHAkeY.%26dt%3D1745376277212",
+		"NetflixId=v%3D3%26ct%3DBgjHlOvcAxLAAZuNS4_CJHy9NKJPzUV-9gElzTlTsmDS1B59TycR-fue7f6q7X9JQAOLttD7OnlldUtnYWXL7VUfu9q4pA0gruZKVIhScTYI1GKbyiEqKaULAXOt0PHQzgRLVTNVoXkxcbu7MYG4wm1870fZkd5qrDOEseZv2WIVk4xIeNL87EZh1vS3RZU3e-qWy2tSmfSNUC-FVDGwxbI6-hk3Zg2MbcWYd70-ghohcCSZp5WHAGXg_xWVC7FHM3aOUVTGwRCU1RgGIg4KDKGr_wsTRRw6HWKqeA..",
+		"gsid=09bb180e-fbb1-4bf6-adcb-a3fa1236e323",
+	}
+	req.Header.Set("Cookie", strings.Join(cookies, "; "))
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		resultChan <- UnblockTestResult{movieID, false, err}
-		return
+		return "", err
 	}
 	defer resp.Body.Close()
 
-	// 状态码 200 表示可以访问该影片
-	if resp.StatusCode == 200 {
-		// 读取响应内容进行进一步验证
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			resultChan <- UnblockTestResult{movieID, false, err}
-			return
-		}
-
-		bodyStr := string(body)
-
-		// 检查是否包含地区限制的关键词
-		// 如果包含这些关键词，说明虽然返回 200 但实际上是地区限制页面
-		if strings.Contains(bodyStr, "Not Available") ||
-			strings.Contains(bodyStr, "not available") ||
-			strings.Contains(bodyStr, "geographic") ||
-			strings.Contains(bodyStr, "isn't available") ||
-			strings.Contains(bodyStr, "area") {
-			resultChan <- UnblockTestResult{movieID, false, nil}
-			return
-		}
-
-		// 检查是否包含正常页面的标志
-		// 正常的 Netflix 影片页面会包含这些元素
-		if strings.Contains(bodyStr, "watch-video") ||
-			strings.Contains(bodyStr, "playback") ||
-			strings.Contains(bodyStr, "\"availability\"") {
-			resultChan <- UnblockTestResult{movieID, true, nil}
-			return
-		}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
 	}
 
-	// 其他情况都视为不可用
-	resultChan <- UnblockTestResult{movieID, false, nil}
+	return string(body), nil
 }
 
-// intToString 整数转字符串辅助函数
-func intToString(n int) string {
-	if n == 0 {
-		return "0"
+// GetNetflixRegion extracts the region code from Netflix response
+func GetNetflixRegion(body string) string {
+	// Extract region using regex pattern: "id":"XX","countryName"
+	re := regexp.MustCompile(`"id":"([^"]+)","countryName"`)
+	matches := re.FindStringSubmatch(body)
+	if len(matches) > 1 {
+		return matches[1]
 	}
-
-	negative := false
-	if n < 0 {
-		negative = true
-		n = -n
-	}
-
-	var result []byte
-	for n > 0 {
-		result = append([]byte{byte('0' + n%10)}, result...)
-		n /= 10
-	}
-
-	if negative {
-		result = append([]byte{'-'}, result...)
-	}
-
-	return string(result)
+	return ""
 }
