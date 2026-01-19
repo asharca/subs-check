@@ -18,18 +18,18 @@ const (
 
 // Netflix 解锁状态
 const (
-	NetworkUnreachable       = -2 // 网络不可达
-	AreaUnavailable          = -1 // 地区不可用
-	AreaAvailable            = 0  // 地区可用但未解锁
-	UnblockSelfMadeMovie     = 1  // 解锁自制剧
-	UnblockNonSelfMadeMovie  = 2  // 解锁非自制剧（完全解锁）
+	NetworkUnreachable      = -2 // 网络不可达
+	AreaUnavailable         = -1 // 地区不可用
+	AreaAvailable           = 0  // 地区可用但未解锁
+	UnblockSelfMadeMovie    = 1  // 解锁自制剧
+	UnblockNonSelfMadeMovie = 2  // 解锁非自制剧（完全解锁）
 )
 
 // UnblockTestResult 解锁测试结果
 type UnblockTestResult struct {
-	movieID     int
-	available   bool
-	err         error
+	movieID   int
+	available bool
+	err       error
 }
 
 // CheckNetflix 检测 Netflix 是否完全解锁（能看非自制剧）
@@ -45,13 +45,13 @@ func CheckNetflix(httpClient *http.Client) (bool, error) {
 	go unblockTest(httpClient, NonSelfMadeAvailableID, testChan)
 
 	// 收集三个测试结果
+	var firstError error
 	for i := 0; i < 3; i++ {
 		res := <-testChan
 
-		// 如果有网络错误，返回错误
-		if res.err != nil {
-			close(testChan)
-			return false, res.err
+		// 记录第一个错误，但继续接收其他结果，避免 goroutine 泄漏
+		if res.err != nil && firstError == nil {
+			firstError = res.err
 		}
 
 		// 根据测试结果更新解锁状态
@@ -77,6 +77,11 @@ func CheckNetflix(httpClient *http.Client) (bool, error) {
 	}
 
 	close(testChan)
+
+	// 如果有错误，返回错误
+	if firstError != nil {
+		return false, firstError
+	}
 
 	// 只有达到 UnblockNonSelfMadeMovie 状态才算完全解锁
 	// 这意味着可以观看所有影片，包括第三方版权内容
@@ -119,10 +124,10 @@ func unblockTest(httpClient *http.Client, movieID int, resultChan chan UnblockTe
 		// 检查是否包含地区限制的关键词
 		// 如果包含这些关键词，说明虽然返回 200 但实际上是地区限制页面
 		if strings.Contains(bodyStr, "Not Available") ||
-		   strings.Contains(bodyStr, "not available") ||
-		   strings.Contains(bodyStr, "geographic") ||
-		   strings.Contains(bodyStr, "isn't available") ||
-		   strings.Contains(bodyStr, "area") {
+			strings.Contains(bodyStr, "not available") ||
+			strings.Contains(bodyStr, "geographic") ||
+			strings.Contains(bodyStr, "isn't available") ||
+			strings.Contains(bodyStr, "area") {
 			resultChan <- UnblockTestResult{movieID, false, nil}
 			return
 		}
@@ -130,8 +135,8 @@ func unblockTest(httpClient *http.Client, movieID int, resultChan chan UnblockTe
 		// 检查是否包含正常页面的标志
 		// 正常的 Netflix 影片页面会包含这些元素
 		if strings.Contains(bodyStr, "watch-video") ||
-		   strings.Contains(bodyStr, "playback") ||
-		   strings.Contains(bodyStr, "\"availability\"") {
+			strings.Contains(bodyStr, "playback") ||
+			strings.Contains(bodyStr, "\"availability\"") {
 			resultChan <- UnblockTestResult{movieID, true, nil}
 			return
 		}

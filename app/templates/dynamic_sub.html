@@ -257,22 +257,69 @@
                     </div>
 
                     <div class="form-group">
-                        <label for="app">流媒体过滤</label>
-                        <select id="app" name="app">
-                            <option value="">不过滤（显示所有节点）</option>
-                            <option value="gemini" selected>Gemini</option>
-                            <option value="openai">OpenAI / ChatGPT</option>
-                            <option value="netflix">Netflix</option>
-                            <option value="disney">Disney+</option>
-                            <option value="youtube">YouTube</option>
-                            <option value="tiktok">TikTok</option>
-                        </select>
-                    </div>
+                        <label>流媒体平台与自定义标签（可多选）</label>
+                        <div style="border: 2px solid #e0e0e0; border-radius: 8px; padding: 10px; max-height: 400px; overflow-y: auto;">
+                            <div class="checkbox-group" style="margin-bottom: 8px;">
+                                <input type="checkbox" id="app_all" onchange="toggleAllPlatforms(this)">
+                                <label for="app_all" style="margin: 0; font-weight: 600;">全选/全不选</label>
+                            </div>
+                            <hr style="margin: 8px 0; border: none; border-top: 1px solid #e0e0e0;">
 
-                    <div class="form-group">
-                        <label for="suffix">节点名称后缀</label>
-                        <input type="text" id="suffix" name="suffix" value="§gemini§" placeholder="例如: §gemini§ 或 ✨ 或 [Gemini]">
-                        <div class="hint">在节点名称后添加自定义后缀，方便识别</div>
+                            <!-- Gemini -->
+                            <div style="margin-bottom: 12px; padding: 8px; background: #f8f9fa; border-radius: 6px;">
+                                <div class="checkbox-group" style="margin-bottom: 6px;">
+                                    <input type="checkbox" class="platform-checkbox" value="gemini" id="app_gemini" checked>
+                                    <label for="app_gemini" style="margin: 0; font-weight: 500;">Gemini</label>
+                                </div>
+                                <input type="text" class="platform-tag-input" data-platform="gemini" placeholder="自定义标签" value="§gemini§" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px;">
+                            </div>
+
+                            <!-- OpenAI -->
+                            <div style="margin-bottom: 12px; padding: 8px; background: #f8f9fa; border-radius: 6px;">
+                                <div class="checkbox-group" style="margin-bottom: 6px;">
+                                    <input type="checkbox" class="platform-checkbox" value="openai" id="app_openai">
+                                    <label for="app_openai" style="margin: 0; font-weight: 500;">OpenAI / ChatGPT</label>
+                                </div>
+                                <input type="text" class="platform-tag-input" data-platform="openai" placeholder="自定义标签" value="§openai§" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px;">
+                            </div>
+
+                            <!-- Netflix -->
+                            <div style="margin-bottom: 12px; padding: 8px; background: #f8f9fa; border-radius: 6px;">
+                                <div class="checkbox-group" style="margin-bottom: 6px;">
+                                    <input type="checkbox" class="platform-checkbox" value="netflix" id="app_netflix">
+                                    <label for="app_netflix" style="margin: 0; font-weight: 500;">Netflix</label>
+                                </div>
+                                <input type="text" class="platform-tag-input" data-platform="netflix" placeholder="自定义标签" value="§netflix§" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px;">
+                            </div>
+
+                            <!-- Disney+ -->
+                            <div style="margin-bottom: 12px; padding: 8px; background: #f8f9fa; border-radius: 6px;">
+                                <div class="checkbox-group" style="margin-bottom: 6px;">
+                                    <input type="checkbox" class="platform-checkbox" value="disney" id="app_disney">
+                                    <label for="app_disney" style="margin: 0; font-weight: 500;">Disney+</label>
+                                </div>
+                                <input type="text" class="platform-tag-input" data-platform="disney" placeholder="自定义标签" value="§disney§" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px;">
+                            </div>
+
+                            <!-- YouTube -->
+                            <div style="margin-bottom: 12px; padding: 8px; background: #f8f9fa; border-radius: 6px;">
+                                <div class="checkbox-group" style="margin-bottom: 6px;">
+                                    <input type="checkbox" class="platform-checkbox" value="youtube" id="app_youtube">
+                                    <label for="app_youtube" style="margin: 0; font-weight: 500;">YouTube</label>
+                                </div>
+                                <input type="text" class="platform-tag-input" data-platform="youtube" placeholder="自定义标签" value="§youtube§" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px;">
+                            </div>
+
+                            <!-- TikTok -->
+                            <div style="margin-bottom: 12px; padding: 8px; background: #f8f9fa; border-radius: 6px;">
+                                <div class="checkbox-group" style="margin-bottom: 6px;">
+                                    <input type="checkbox" class="platform-checkbox" value="tiktok" id="app_tiktok">
+                                    <label for="app_tiktok" style="margin: 0; font-weight: 500;">TikTok</label>
+                                </div>
+                                <input type="text" class="platform-tag-input" data-platform="tiktok" placeholder="自定义标签" value="§tiktok§" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px;">
+                            </div>
+                        </div>
+                        <div class="hint">选择平台并为每个平台设置独立的自定义标签</div>
                     </div>
 
                     <div class="form-group">
@@ -309,7 +356,7 @@
                 <div id="result" class="result">
                     <strong>生成的订阅链接：</strong>
                     <div class="result-url" id="resultUrl"></div>
-                    <button class="copy-btn" onclick="copyUrl()">
+                    <button class="copy-btn" onclick="copyUrl(event)">
                         <i class="bi bi-clipboard me-1"></i>复制链接
                     </button>
                 </div>
@@ -342,27 +389,19 @@
         let statusUpdateInterval = null;
         let isGenerating = false;
 
-        // 当流媒体选项改变时，自动更新后缀建议
-        document.getElementById('app').addEventListener('change', function() {
-            const suffixInput = document.getElementById('suffix');
-            const app = this.value;
+        // 全选/全不选功能
+        function toggleAllPlatforms(checkbox) {
+            const platformCheckboxes = document.querySelectorAll('.platform-checkbox');
+            platformCheckboxes.forEach(cb => {
+                cb.checked = checkbox.checked;
+            });
+        }
 
-            const suffixMap = {
-                'gemini': '§gemini§',
-                'openai': '§openai§',
-                'netflix': '§netflix§',
-                'disney': '§disney§',
-                'youtube': '§youtube§',
-                'tiktok': '§tiktok§',
-                '': ''
-            };
-
-            const currentValue = suffixInput.value;
-            const isDefaultValue = Object.values(suffixMap).includes(currentValue) || currentValue === '';
-
-            if (isDefaultValue && suffixMap[app] !== undefined) {
-                suffixInput.value = suffixMap[app];
-            }
+        // 监听平台复选框变化（不再需要自动更新后缀，因为每个平台有独立的标签输入框）
+        document.querySelectorAll('.platform-checkbox').forEach(checkbox => {
+            checkbox.addEventListener('change', function() {
+                // 可以在这里添加其他逻辑，比如高亮显示选中的平台
+            });
         });
 
         document.getElementById('subForm').addEventListener('submit', function(e) {
@@ -372,14 +411,33 @@
             const params = new URLSearchParams();
 
             const subLink = document.getElementById('sub_link').value.trim();
-            const app = document.getElementById('app').value;
-            const suffix = document.getElementById('suffix').value.trim();
+
+            // 收集选中的平台及其自定义标签
+            const selectedPlatforms = [];
+            const platformTags = {};
+
+            document.querySelectorAll('.platform-checkbox:checked').forEach(cb => {
+                const platform = cb.value;
+                selectedPlatforms.push(platform);
+
+                // 获取对应的标签输入框
+                const tagInput = document.querySelector(`.platform-tag-input[data-platform="${platform}"]`);
+                if (tagInput && tagInput.value.trim()) {
+                    platformTags[platform] = tagInput.value.trim();
+                }
+            });
+
             const target = document.getElementById('target').value;
             const refresh = document.getElementById('refresh').checked;
 
             if (subLink) params.append('sub_link', subLink);
-            if (app) params.append('app', app);
-            if (suffix) params.append('suffix', suffix);
+            if (selectedPlatforms.length > 0) {
+                params.append('app', selectedPlatforms.join(','));
+                // 将平台标签编码为 JSON 字符串
+                if (Object.keys(platformTags).length > 0) {
+                    params.append('tags', JSON.stringify(platformTags));
+                }
+            }
             if (target) params.append('target', target);
             if (refresh) params.append('refresh', 'true');
 
@@ -536,7 +594,7 @@
             logsContainer.scrollTop = logsContainer.scrollHeight;
         }
 
-        function copyUrl() {
+        function copyUrl(event) {
             const url = document.getElementById('resultUrl').textContent;
             navigator.clipboard.writeText(url).then(function() {
                 const btn = event.target.closest('button');
@@ -545,6 +603,9 @@
                 setTimeout(function() {
                     btn.innerHTML = originalHTML;
                 }, 2000);
+            }).catch(function(err) {
+                console.error('复制失败:', err);
+                alert('复制失败，请手动复制链接');
             });
         }
     </script>

@@ -255,25 +255,37 @@ func GenerateSimpleKey() string {
 
 // dynamicSubscriptionHandler 动态订阅处理器
 // 支持通过URL参数指定订阅链接、流媒体应用和导出格式
-// 示例: http://localhost:8199?sub_link=https://example.com/sub&app=gemini&target=Clash&refresh=true&suffix=✨
+// 示例: http://localhost:8199?sub_link=https://example.com/sub&app=gemini,netflix&tags={"gemini":"§gemini§","netflix":"§netflix§"}&target=Clash&refresh=true
 func (app *App) dynamicSubscriptionHandler(c *gin.Context) {
 	subLink := c.Query("sub_link")
 	appFilter := c.Query("app")
 	target := c.Query("target")
 	refresh := c.Query("refresh") == "true"
-	customTag := c.Query("suffix") // 自定义标签（使用suffix参数名以匹配HTML表单）
+	tagsJSON := c.Query("tags") // 平台标签的 JSON 字符串
+
+	// 解析平台标签
+	var platformTags map[string]string
+	if tagsJSON != "" {
+		if err := json.Unmarshal([]byte(tagsJSON), &platformTags); err != nil {
+			slog.Warn(fmt.Sprintf("解析平台标签失败: %v", err))
+			platformTags = nil
+		}
+	}
+
+	// 兼容旧的 suffix 参数（如果没有提供 tags，则使用 suffix 作为所有平台的统一标签）
+	customTag := c.Query("suffix")
 	if customTag == "" {
-		customTag = c.Query("tag") // 兼容tag参数
+		customTag = c.Query("tag")
 	}
 
 	// 如果没有任何参数，显示HTML表单页面
-	if subLink == "" && appFilter == "" && target == "" && customTag == "" {
+	if subLink == "" && appFilter == "" && target == "" && tagsJSON == "" && customTag == "" {
 		c.HTML(http.StatusOK, "dynamic_sub.html", nil)
 		return
 	}
 
 	// 获取检测结果
-	results, err := app.getCheckResults(subLink, appFilter, refresh, customTag)
+	results, err := app.getCheckResults(subLink, appFilter, refresh, platformTags, customTag)
 	if err != nil {
 		c.String(http.StatusInternalServerError, fmt.Sprintf("获取节点失败: %v", err))
 		return
@@ -365,7 +377,7 @@ func normalizeTarget(target string) string {
 }
 
 // getCheckResults 获取检测结果（带缓存）
-func (app *App) getCheckResults(subLink string, appFilter string, refresh bool, customTag string) ([]check.Result, error) {
+func (app *App) getCheckResults(subLink string, appFilter string, refresh bool, platformTags map[string]string, customTag string) ([]check.Result, error) {
 	// 如果没有提供订阅链接，读取本地已保存的检测结果
 	if subLink == "" {
 		slog.Info("从本地文件读取检测结果")
@@ -420,8 +432,8 @@ func (app *App) getCheckResults(subLink string, appFilter string, refresh bool, 
 			}
 		}
 
-		// 如果指定了自定义标签，需要重新处理节点名称
-		if customTag != "" && appFilter != "" {
+		// 如果指定了平台标签或自定义标签，需要重新处理节点名称
+		if (platformTags != nil && len(platformTags) > 0) || (customTag != "" && appFilter != "") {
 			// 为匹配的节点重新添加自定义标签
 			for i := range results {
 				result := &results[i]
@@ -431,31 +443,58 @@ func (app *App) getCheckResults(subLink string, appFilter string, refresh bool, 
 					name = strings.TrimSpace(name)
 
 					// 根据检测结果决定是否添加自定义标签
-					var shouldAddTag bool
-					switch appFilter {
-					case "openai", "gpt":
-						shouldAddTag = result.Openai || result.OpenaiWeb
-					case "gemini", "gm":
-						shouldAddTag = result.Gemini
-					case "netflix", "nf":
-						shouldAddTag = result.Netflix
-					case "disney", "d+":
-						shouldAddTag = result.Disney
-					case "youtube", "yt":
-						shouldAddTag = result.Youtube != ""
-					case "tiktok", "tk":
-						shouldAddTag = result.TikTok != ""
+					// 收集该节点支持的所有平台标签
+					var tags []string
+
+					// 解析多个平台参数
+					appList := strings.Split(appFilter, ",")
+					for _, platform := range appList {
+						platform = strings.TrimSpace(platform)
+
+						// 获取该平台的自定义标签
+						var tag string
+						if platformTags != nil {
+							tag = platformTags[platform]
+						}
+						if tag == "" && customTag != "" {
+							tag = customTag // 回退到统一标签
+						}
+
+						if tag == "" {
+							continue // 没有标签则跳过
+						}
+
+						switch platform {
+						case "openai", "gpt":
+							if result.Openai || result.OpenaiWeb {
+								tags = append(tags, tag)
+							}
+						case "gemini", "gm":
+							if result.Gemini {
+								tags = append(tags, tag)
+							}
+						case "netflix", "nf":
+							if result.Netflix {
+								tags = append(tags, tag)
+							}
+						case "disney", "d+":
+							if result.Disney {
+								tags = append(tags, tag)
+							}
+						case "youtube", "yt":
+							if result.Youtube != "" {
+								tags = append(tags, tag+"-"+result.Youtube)
+							}
+						case "tiktok", "tk":
+							if result.TikTok != "" {
+								tags = append(tags, tag+"-"+result.TikTok)
+							}
+						}
 					}
 
-					if shouldAddTag {
-						// 对于 YouTube 和 TikTok，添加地区后缀
-						if (appFilter == "youtube" || appFilter == "yt") && result.Youtube != "" {
-							name += "|" + customTag + "-" + result.Youtube
-						} else if (appFilter == "tiktok" || appFilter == "tk") && result.TikTok != "" {
-							name += "|" + customTag + "-" + result.TikTok
-						} else {
-							name += "|" + customTag
-						}
+					// 如果有匹配的标签，添加到节点名称
+					if len(tags) > 0 {
+						name += "|" + strings.Join(tags, "|")
 					}
 
 					result.Proxy["name"] = name
@@ -501,50 +540,44 @@ func (app *App) getCheckResults(subLink string, appFilter string, refresh bool, 
 	config.GlobalConfig.SubUrls = []string{subLink}
 	config.GlobalConfig.MediaCheck = true
 
-	// 如果提供了自定义标签，临时设置平台标签
-	if customTag != "" && appFilter != "" {
-		if config.GlobalConfig.PlatformTags == nil {
-			config.GlobalConfig.PlatformTags = make(map[string]string)
-		}
-		// 根据appFilter设置对应的平台标签
-		switch appFilter {
-		case "openai", "gpt":
-			config.GlobalConfig.PlatformTags["openai"] = customTag
-			config.GlobalConfig.PlatformTags["openai-web"] = customTag
-		case "gemini", "gm":
-			config.GlobalConfig.PlatformTags["gemini"] = customTag
-		case "netflix", "nf":
-			config.GlobalConfig.PlatformTags["netflix"] = customTag
-		case "disney", "d+":
-			config.GlobalConfig.PlatformTags["disney"] = customTag
-		case "youtube", "yt":
-			config.GlobalConfig.PlatformTags["youtube"] = customTag
-		case "tiktok", "tk":
-			config.GlobalConfig.PlatformTags["tiktok"] = customTag
-		}
-		slog.Info(fmt.Sprintf("临时设置自定义标签: %s = %s", appFilter, customTag))
-	}
+	// 注意：不在这里设置 PlatformTags，而是在检测完成后手动添加自定义标签
 
 	// 根据appFilter参数决定检测哪些平台
 	var platforms []string
 	if appFilter != "" {
-		// 只检测指定的平台
-		switch appFilter {
-		case "openai", "gpt":
-			platforms = []string{"openai"}
-		case "gemini", "gm":
-			platforms = []string{"gemini"}
-		case "netflix", "nf":
-			platforms = []string{"netflix"}
-		case "disney", "d+":
-			platforms = []string{"disney"}
-		case "youtube", "yt":
-			platforms = []string{"youtube"}
-		case "tiktok", "tk":
-			platforms = []string{"tiktok"}
-		default:
-			// 如果是未知的app，检测所有平台
+		// 支持逗号分隔的多个平台
+		appList := strings.Split(appFilter, ",")
+		platformSet := make(map[string]bool) // 用于去重
+
+		for _, app := range appList {
+			app = strings.TrimSpace(app)
+			switch app {
+			case "openai", "gpt":
+				platformSet["openai"] = true
+			case "gemini", "gm":
+				platformSet["gemini"] = true
+			case "netflix", "nf":
+				platformSet["netflix"] = true
+			case "disney", "d+":
+				platformSet["disney"] = true
+			case "youtube", "yt":
+				platformSet["youtube"] = true
+			case "tiktok", "tk":
+				platformSet["tiktok"] = true
+			default:
+				// 如果是未知的app，跳过
+				slog.Warn(fmt.Sprintf("未知的平台参数: %s", app))
+			}
+		}
+
+		// 如果没有识别到任何有效平台，检测所有平台
+		if len(platformSet) == 0 {
 			platforms = []string{"openai", "youtube", "netflix", "disney", "gemini", "tiktok"}
+		} else {
+			// 转换为切片
+			for platform := range platformSet {
+				platforms = append(platforms, platform)
+			}
 		}
 	} else {
 		// 如果没有指定app，检测所有平台
@@ -578,6 +611,12 @@ func (app *App) getCheckResults(subLink string, appFilter string, refresh bool, 
 		}
 	}
 
+	// 如果提供了平台标签或自定义标签，为节点添加多平台标签
+	if (platformTags != nil && len(platformTags) > 0) || (customTag != "" && appFilter != "") {
+		results = app.addMultiPlatformTagsWithMap(results, appFilter, platformTags, customTag)
+		slog.Info("已添加自定义多平台标签")
+	}
+
 	// 保存到缓存
 	cacheMutex.Lock()
 	resultCache[cacheKey] = &checkResultCache{
@@ -590,38 +629,57 @@ func (app *App) getCheckResults(subLink string, appFilter string, refresh bool, 
 	return results, nil
 }
 
-// filterResultsByApp 根据流媒体应用过滤检测结果
+// filterResultsByApp 根据流媒体应用过滤检测结果（支持多平台）
 func (app *App) filterResultsByApp(results []check.Result, appName string) []check.Result {
 	filtered := make([]check.Result, 0)
+
+	// 解析多个平台参数（逗号分隔）
+	appList := strings.Split(appName, ",")
+	platformMap := make(map[string]bool)
+	for _, a := range appList {
+		a = strings.TrimSpace(a)
+		if a != "" {
+			platformMap[a] = true
+		}
+	}
 
 	slog.Info(fmt.Sprintf("开始过滤，应用: %s, 总节点数: %d", appName, len(results)))
 
 	for _, result := range results {
 		matched := false
-		switch appName {
-		case "openai", "gpt":
-			if result.Openai || result.OpenaiWeb {
-				matched = true
+
+		// 检查节点是否匹配任一选中的平台
+		for platform := range platformMap {
+			switch platform {
+			case "openai", "gpt":
+				if result.Openai || result.OpenaiWeb {
+					matched = true
+				}
+			case "gemini", "gm":
+				if result.Gemini {
+					matched = true
+				}
+			case "netflix", "nf":
+				if result.Netflix {
+					matched = true
+				}
+			case "disney", "d+":
+				if result.Disney {
+					matched = true
+				}
+			case "youtube", "yt":
+				if result.Youtube != "" {
+					matched = true
+				}
+			case "tiktok", "tk":
+				if result.TikTok != "" {
+					matched = true
+				}
 			}
-		case "gemini", "gm":
-			if result.Gemini {
-				matched = true
-			}
-		case "netflix", "nf":
-			if result.Netflix {
-				matched = true
-			}
-		case "disney", "d+":
-			if result.Disney {
-				matched = true
-			}
-		case "youtube", "yt":
-			if result.Youtube != "" {
-				matched = true
-			}
-		case "tiktok", "tk":
-			if result.TikTok != "" {
-				matched = true
+
+			// 只要匹配任一平台就添加该节点
+			if matched {
+				break
 			}
 		}
 
@@ -921,6 +979,134 @@ func (app *App) addCustomPlatformTags(results []check.Result, appFilter string, 
 			// 将标记添加到名称中
 			if tag != "" {
 				name += "|" + tag
+			}
+
+			result.Proxy["name"] = name
+		}
+	}
+	return results
+}
+
+// addMultiPlatformTags 为节点添加多平台标签（支持一个节点显示多个平台标签）
+func (app *App) addMultiPlatformTags(results []check.Result, appFilter string, customTag string) []check.Result {
+	// 解析多个平台参数
+	appList := strings.Split(appFilter, ",")
+
+	for i := range results {
+		result := &results[i]
+		if name, ok := result.Proxy["name"].(string); ok {
+			// 移除已有的流媒体标记
+			name = regexp.MustCompile(`\s*\|(?:NF|D\+|GPT⁺|GPT|GM|YT-[^|]+|TK-[^|]+|\d+%)`).ReplaceAllString(name, "")
+			name = strings.TrimSpace(name)
+
+			// 收集该节点支持的所有平台标签
+			var tags []string
+
+			for _, platform := range appList {
+				platform = strings.TrimSpace(platform)
+				switch platform {
+				case "openai", "gpt":
+					if result.Openai {
+						tags = append(tags, customTag+"-GPT⁺")
+					} else if result.OpenaiWeb {
+						tags = append(tags, customTag+"-GPT")
+					}
+				case "gemini", "gm":
+					if result.Gemini {
+						tags = append(tags, customTag+"-GM")
+					}
+				case "netflix", "nf":
+					if result.Netflix {
+						tags = append(tags, customTag+"-NF")
+					}
+				case "disney", "d+":
+					if result.Disney {
+						tags = append(tags, customTag+"-D+")
+					}
+				case "youtube", "yt":
+					if result.Youtube != "" {
+						tags = append(tags, customTag+"-YT-"+result.Youtube)
+					}
+				case "tiktok", "tk":
+					if result.TikTok != "" {
+						tags = append(tags, customTag+"-TK-"+result.TikTok)
+					}
+				}
+			}
+
+			// 如果有匹配的标签，添加到节点名称
+			if len(tags) > 0 {
+				name += "|" + strings.Join(tags, "|")
+			}
+
+			result.Proxy["name"] = name
+		}
+	}
+	return results
+}
+
+// addMultiPlatformTagsWithMap 为节点添加多平台标签（支持每个平台独立的自定义标签）
+func (app *App) addMultiPlatformTagsWithMap(results []check.Result, appFilter string, platformTags map[string]string, fallbackTag string) []check.Result {
+	// 解析多个平台参数
+	appList := strings.Split(appFilter, ",")
+
+	for i := range results {
+		result := &results[i]
+		if name, ok := result.Proxy["name"].(string); ok {
+			// 移除已有的流媒体标记
+			name = regexp.MustCompile(`\s*\|(?:NF|D\+|GPT⁺|GPT|GM|YT-[^|]+|TK-[^|]+|\d+%)`).ReplaceAllString(name, "")
+			name = strings.TrimSpace(name)
+
+			// 收集该节点支持的所有平台标签
+			var tags []string
+
+			for _, platform := range appList {
+				platform = strings.TrimSpace(platform)
+
+				// 获取该平台的自定义标签
+				var tag string
+				if platformTags != nil {
+					tag = platformTags[platform]
+				}
+				if tag == "" && fallbackTag != "" {
+					tag = fallbackTag // 回退到统一标签
+				}
+
+				if tag == "" {
+					continue // 没有标签则跳过
+				}
+
+				switch platform {
+				case "openai", "gpt":
+					if result.Openai || result.OpenaiWeb {
+						tags = append(tags, tag)
+					}
+				case "gemini", "gm":
+					if result.Gemini {
+						tags = append(tags, tag)
+					}
+				case "netflix", "nf":
+					if result.Netflix {
+						tags = append(tags, tag)
+					}
+				case "disney", "d+":
+					if result.Disney {
+						tags = append(tags, tag)
+					}
+				case "youtube", "yt":
+					if result.Youtube != "" {
+						tags = append(tags, tag+"-"+result.Youtube)
+					}
+				case "tiktok", "tk":
+					if result.TikTok != "" {
+						tags = append(tags, tag+"-"+result.TikTok)
+					}
+				}
+			}
+
+			// 如果有匹配的标签，添加到节点名称
+			if len(tags) > 0 {
+				name += "|" + strings.Join(tags, "|")
 			}
 
 			result.Proxy["name"] = name
