@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -23,15 +24,23 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// 缓存结构
-type checkResultCache struct {
+// 速度缓存结构（缓存1个月）
+type speedCache struct {
+	speeds    map[string]int // key: 节点名称, value: 速度(KB/s)
+	timestamp time.Time
+}
+
+// 流媒体缓存结构（缓存1小时）
+type mediaCache struct {
 	results   []check.Result
 	timestamp time.Time
 }
 
-// 全局缓存，key为订阅链接
-var resultCache = make(map[string]*checkResultCache)
-var cacheMutex sync.RWMutex
+// 全局缓存
+var speedCacheMap = make(map[string]*speedCache)     // key: 订阅链接
+var mediaCacheMap = make(map[string]*mediaCache)     // key: 订阅链接
+var speedCacheMutex sync.RWMutex
+var mediaCacheMutex sync.RWMutex
 
 // initHttpServer 初始化HTTP服务器
 func (app *App) initHttpServer() error {
@@ -313,6 +322,9 @@ func (app *App) dynamicSubscriptionHandler(c *gin.Context) {
 	// 不再过滤节点，返回所有节点（包括不可用的）
 	// 如果指定了 appFilter，只是用来添加流媒体标签，不用来过滤节点
 
+	// 根据速度排序节点（速度快的在前）
+	results = app.sortResultsBySpeed(results)
+
 	// 提取节点列表
 	proxies := make([]map[string]any, 0)
 
@@ -518,24 +530,50 @@ func (app *App) getCheckResults(subLink string, appFilter string, refresh bool, 
 		return results, nil
 	}
 
-	// 构建缓存key（包含订阅链接和app参数）
+	// 构建缓存key（包含订阅链接）
 	cacheKey := subLink
-	if appFilter != "" {
-		cacheKey = fmt.Sprintf("%s|app=%s", subLink, appFilter)
-	}
 
 	// 检查缓存（如果不是强制刷新）
+	var cachedSpeeds map[string]int
+	var needSpeedTest bool = true
+	var needMediaCheck bool = true
+
 	if !refresh {
-		cacheMutex.RLock()
-		if cached, ok := resultCache[cacheKey]; ok {
-			// 缓存有效期30分钟
-			if time.Since(cached.timestamp) < 30*time.Minute {
-				cacheMutex.RUnlock()
-				slog.Info(fmt.Sprintf("使用缓存结果，缓存时间: %v", cached.timestamp.Format("2006-01-02 15:04:05")))
+		// 检查速度缓存（1个月有效期）
+		speedCacheMutex.RLock()
+		if cached, ok := speedCacheMap[cacheKey]; ok {
+			if time.Since(cached.timestamp) < 30*24*time.Hour { // 30天
+				cachedSpeeds = cached.speeds
+				needSpeedTest = false
+				slog.Info(fmt.Sprintf("使用速度缓存，缓存时间: %v", cached.timestamp.Format("2006-01-02 15:04:05")))
+			}
+		}
+		speedCacheMutex.RUnlock()
+
+		// 检查流媒体缓存（1小时有效期）
+		mediaCacheMutex.RLock()
+		if cached, ok := mediaCacheMap[cacheKey]; ok {
+			if time.Since(cached.timestamp) < 1*time.Hour {
+				mediaCacheMutex.RUnlock()
+				slog.Info(fmt.Sprintf("使用流媒体缓存，缓存时间: %v", cached.timestamp.Format("2006-01-02 15:04:05")))
+
+				// 如果有速度缓存，应用到结果中
+				if cachedSpeeds != nil {
+					results := cached.results
+					for i := range results {
+						if name, ok := results[i].Proxy["name"].(string); ok {
+							if speed, exists := cachedSpeeds[name]; exists {
+								// 更新节点名称中的速度标签
+								results[i] = app.updateSpeedInResult(results[i], speed)
+							}
+						}
+					}
+					return results, nil
+				}
 				return cached.results, nil
 			}
 		}
-		cacheMutex.RUnlock()
+		mediaCacheMutex.RUnlock()
 	} else {
 		slog.Info("强制刷新，忽略缓存")
 	}
@@ -601,13 +639,25 @@ func (app *App) getCheckResults(subLink string, appFilter string, refresh bool, 
 
 	config.GlobalConfig.Platforms = platforms
 
-	slog.Info(fmt.Sprintf("临时配置已设置: MediaCheck=true, Platforms=%v, SpeedTest=%v", platforms, speedTest))
+	slog.Info(fmt.Sprintf("临时配置已设置: MediaCheck=true, Platforms=%v, SpeedTest=%v, UseSpeedCache=%v", platforms, speedTest, !needSpeedTest))
 
 	// 设置测速标志
 	check.EnableSpeedTest.Store(speedTest)
 
+	// 临时保存原始的测速URL配置
+	originalSpeedTestUrl := config.GlobalConfig.SpeedTestUrl
+
+	// 如果有速度缓存且不需要重新测速，临时禁用测速
+	if !needSpeedTest && cachedSpeeds != nil {
+		config.GlobalConfig.SpeedTestUrl = ""
+		slog.Info("使用速度缓存，跳过测速")
+	}
+
 	// 执行完整的检测流程
 	results, err := check.Check()
+
+	// 恢复测速URL配置
+	config.GlobalConfig.SpeedTestUrl = originalSpeedTestUrl
 
 	// 恢复原配置
 	config.GlobalConfig.SubUrls = originalSubUrls
@@ -620,6 +670,20 @@ func (app *App) getCheckResults(subLink string, appFilter string, refresh bool, 
 	}
 
 	slog.Info(fmt.Sprintf("检测完成，可用节点数: %d", len(results)))
+
+	// 如果使用了速度缓存，应用缓存的速度到结果中
+	if !needSpeedTest && cachedSpeeds != nil {
+		slog.Info("应用速度缓存到检测结果")
+		for i := range results {
+			if name, ok := results[i].Proxy["name"].(string); ok {
+				// 提取基础节点名（去除标签）
+				baseName := strings.Split(name, "|")[0]
+				if speed, exists := cachedSpeeds[baseName]; exists {
+					results[i] = app.updateSpeedInResult(results[i], speed)
+				}
+			}
+		}
+	}
 
 	// 打印前几个节点的流媒体支持情况
 	for i, result := range results {
@@ -635,14 +699,34 @@ func (app *App) getCheckResults(subLink string, appFilter string, refresh bool, 
 		slog.Info("已添加自定义多平台标签")
 	}
 
-	// 保存到缓存
-	cacheMutex.Lock()
-	resultCache[cacheKey] = &checkResultCache{
+	// 保存速度缓存（如果进行了测速）
+	if needSpeedTest && originalSpeedTestUrl != "" {
+		speedCacheMutex.Lock()
+		speeds := make(map[string]int)
+		for _, result := range results {
+			if name, ok := result.Proxy["name"].(string); ok {
+				// 从节点名称中提取速度
+				baseName := strings.Split(name, "|")[0]
+				speed := app.extractSpeedFromName(name)
+				speeds[baseName] = speed
+			}
+		}
+		speedCacheMap[cacheKey] = &speedCache{
+			speeds:    speeds,
+			timestamp: time.Now(),
+		}
+		speedCacheMutex.Unlock()
+		slog.Info(fmt.Sprintf("速度缓存已保存，节点数: %d", len(speeds)))
+	}
+
+	// 保存流媒体缓存
+	mediaCacheMutex.Lock()
+	mediaCacheMap[cacheKey] = &mediaCache{
 		results:   results,
 		timestamp: time.Now(),
 	}
-	cacheMutex.Unlock()
-	slog.Info(fmt.Sprintf("结果已缓存，key: %s", cacheKey))
+	mediaCacheMutex.Unlock()
+	slog.Info(fmt.Sprintf("流媒体缓存已保存，key: %s", cacheKey))
 
 	return results, nil
 }
@@ -1139,4 +1223,63 @@ func (app *App) addMultiPlatformTagsWithMap(results []check.Result, appFilter st
 		}
 	}
 	return results
+}
+
+// sortResultsBySpeed 根据速度对节点排序（速度快的在前）
+func (app *App) sortResultsBySpeed(results []check.Result) []check.Result {
+	// 使用 sort.SliceStable 保持相同速度节点的原有顺序
+	sort.SliceStable(results, func(i, j int) bool {
+		// 速度高的排在前面
+		return results[i].Speed > results[j].Speed
+	})
+	return results
+}
+
+// updateSpeedInResult 更新结果中的速度信息
+func (app *App) updateSpeedInResult(result check.Result, speed int) check.Result {
+	if name, ok := result.Proxy["name"].(string); ok {
+		// 移除已有的速度标签
+		name = regexp.MustCompile(`\s*\|(?:\s*[\d.]+[KM]B/s)`).ReplaceAllString(name, "")
+
+		// 添加新的速度标签
+		var speedStr string
+		if speed == 0 {
+			speedStr = "0KB/s"
+		} else if speed < 1024 {
+			speedStr = fmt.Sprintf("%dKB/s", speed)
+		} else {
+			speedStr = fmt.Sprintf("%.1fMB/s", float64(speed)/1024)
+		}
+
+		// 将速度标签插入到第一个位置
+		parts := strings.Split(name, "|")
+		if len(parts) > 1 {
+			name = parts[0] + "|" + speedStr + "|" + strings.Join(parts[1:], "|")
+		} else {
+			name = name + "|" + speedStr
+		}
+
+		result.Proxy["name"] = name
+	}
+	return result
+}
+
+// extractSpeedFromName 从节点名称中提取速度值
+func (app *App) extractSpeedFromName(name string) int {
+	// 匹配速度标签：XXX KB/s 或 X.X MB/s
+	re := regexp.MustCompile(`\|(\d+(?:\.\d+)?)\s*([KM]B/s)`)
+	matches := re.FindStringSubmatch(name)
+	if len(matches) >= 3 {
+		speedStr := matches[1]
+		unit := matches[2]
+
+		var speed float64
+		fmt.Sscanf(speedStr, "%f", &speed)
+
+		if unit == "MB/s" {
+			return int(speed * 1024) // 转换为 KB/s
+		}
+		return int(speed)
+	}
+	return 0
 }

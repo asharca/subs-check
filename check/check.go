@@ -216,6 +216,7 @@ func (pc *ProxyChecker) checkProxy(proxy map[string]any) *Result {
 			return nil
 		}
 		// 更新节点名称（标记为不可用）
+		res.Speed = 0
 		pc.updateProxyNameSimple(res, 0)
 		return res
 	}
@@ -230,10 +231,14 @@ func (pc *ProxyChecker) checkProxy(proxy map[string]any) *Result {
 				return nil
 			}
 			// 更新节点名称（显示速度为0或实际速度）
+			res.Speed = speed
 			pc.updateProxyNameSimple(res, speed)
 			return res
 		}
 	}
+
+	// 保存速度信息
+	res.Speed = speed
 
 	var mediaClient *http.Client
 	if config.GlobalConfig.MediaCheck {
