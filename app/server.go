@@ -255,13 +255,14 @@ func GenerateSimpleKey() string {
 
 // dynamicSubscriptionHandler 动态订阅处理器
 // 支持通过URL参数指定订阅链接、流媒体应用和导出格式
-// 示例: http://localhost:8199?sub_link=https://example.com/sub&app=gemini,netflix&tags={"gemini":"§gemini§","netflix":"§netflix§"}&target=Clash&refresh=true
+// 示例: http://localhost:8199?sub_link=https://example.com/sub&app=gemini,netflix&tags={"gemini":"§gemini§","netflix":"§netflix§"}&target=Clash&refresh=true&speed_test=true
 func (app *App) dynamicSubscriptionHandler(c *gin.Context) {
 	subLink := c.Query("sub_link")
 	appFilter := c.Query("app")
 	target := c.Query("target")
 	refresh := c.Query("refresh") == "true"
-	tagsJSON := c.Query("tags") // 平台标签的 JSON 字符串
+	speedTest := c.Query("speed_test") == "true" // 是否启用测速和过滤
+	tagsJSON := c.Query("tags")                  // 平台标签的 JSON 字符串
 
 	// 解析平台标签
 	var platformTags map[string]string
@@ -303,7 +304,7 @@ func (app *App) dynamicSubscriptionHandler(c *gin.Context) {
 	}
 
 	// 获取检测结果
-	results, err := app.getCheckResults(subLink, appFilter, refresh, platformTags, customTag)
+	results, err := app.getCheckResults(subLink, appFilter, refresh, speedTest, platformTags, customTag)
 	if err != nil {
 		c.String(http.StatusInternalServerError, fmt.Sprintf("获取节点失败: %v", err))
 		return
@@ -384,7 +385,7 @@ func normalizeTarget(target string) string {
 }
 
 // getCheckResults 获取检测结果（带缓存）
-func (app *App) getCheckResults(subLink string, appFilter string, refresh bool, platformTags map[string]string, customTag string) ([]check.Result, error) {
+func (app *App) getCheckResults(subLink string, appFilter string, refresh bool, speedTest bool, platformTags map[string]string, customTag string) ([]check.Result, error) {
 	// 如果没有提供订阅链接，读取本地已保存的检测结果
 	if subLink == "" {
 		slog.Info("从本地文件读取检测结果")
@@ -600,7 +601,10 @@ func (app *App) getCheckResults(subLink string, appFilter string, refresh bool, 
 
 	config.GlobalConfig.Platforms = platforms
 
-	slog.Info(fmt.Sprintf("临时配置已设置: MediaCheck=true, Platforms=%v", platforms))
+	slog.Info(fmt.Sprintf("临时配置已设置: MediaCheck=true, Platforms=%v, SpeedTest=%v", platforms, speedTest))
+
+	// 设置测速标志
+	check.EnableSpeedTest.Store(speedTest)
 
 	// 执行完整的检测流程
 	results, err := check.Check()

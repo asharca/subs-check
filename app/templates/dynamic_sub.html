@@ -357,6 +357,14 @@
                         <div class="hint">勾选后将重新检测节点（耗时较长）</div>
                     </div>
 
+                    <div class="form-group">
+                        <div class="checkbox-group">
+                            <input type="checkbox" id="speed_test" name="speed_test">
+                            <label for="speed_test" style="margin: 0;">启用测速和过滤</label>
+                        </div>
+                        <div class="hint">勾选后只返回可用且速度达标的节点</div>
+                    </div>
+
                     <button type="submit" class="btn" id="generateBtn">
                         <i class="bi bi-rocket-takeoff me-2"></i>生成订阅链接
                     </button>
@@ -462,6 +470,7 @@
 
             const target = document.getElementById('target').value;
             const refresh = document.getElementById('refresh').checked;
+            const speedTest = document.getElementById('speed_test').checked;
 
             if (subLink) params.append('sub_link', subLink);
 
@@ -477,6 +486,7 @@
             }
             if (target) params.append('target', target);
             if (refresh) params.append('refresh', 'true');
+            if (speedTest) params.append('speed_test', 'true');
 
             const url = params.toString() ? baseUrl + '?' + params.toString() : baseUrl;
 

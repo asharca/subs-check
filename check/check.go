@@ -58,6 +58,7 @@ var ProxyCount atomic.Uint32
 var TotalBytes atomic.Uint64
 
 var ForceClose atomic.Bool
+var EnableSpeedTest atomic.Bool // 是否启用测速和过滤不可用节点
 
 var Bucket *ratelimit.Bucket
 
@@ -198,14 +199,24 @@ func (pc *ProxyChecker) checkProxy(proxy map[string]any) *Result {
 	httpClient := CreateClient(proxy)
 	if httpClient == nil {
 		slog.Debug(fmt.Sprintf("创建代理Client失败: %v", proxy["name"]))
-		// 返回节点但标记为不可用
+		// 如果启用测速，过滤掉不可用节点；否则返回节点
+		if EnableSpeedTest.Load() {
+			return nil
+		}
+		// 更新节点名称（标记为不可用）
+		pc.updateProxyNameSimple(res, 0)
 		return res
 	}
 
 	google, err := platform.CheckAlive(httpClient.Client)
 	if err != nil || !google {
 		httpClient.Close()
-		// 返回节点但标记为不可用
+		// 如果启用测速，过滤掉不可用节点；否则返回节点
+		if EnableSpeedTest.Load() {
+			return nil
+		}
+		// 更新节点名称（标记为不可用）
+		pc.updateProxyNameSimple(res, 0)
 		return res
 	}
 	defer httpClient.Close()
@@ -214,7 +225,12 @@ func (pc *ProxyChecker) checkProxy(proxy map[string]any) *Result {
 	if config.GlobalConfig.SpeedTestUrl != "" {
 		speed, _, err = platform.CheckSpeed(httpClient.Client, Bucket, httpClient.BytesRead)
 		if err != nil || speed < config.GlobalConfig.MinSpeed {
-			// 返回节点但标记为不可用
+			// 如果启用测速，过滤掉不可用节点；否则返回节点
+			if EnableSpeedTest.Load() {
+				return nil
+			}
+			// 更新节点名称（显示速度为0或实际速度）
+			pc.updateProxyNameSimple(res, speed)
 			return res
 		}
 	}
@@ -373,6 +389,46 @@ func (pc *ProxyChecker) updateProxyName(res *Result, httpClient *ProxyClient, sp
 
 	res.Proxy["name"] = name
 
+}
+
+// updateProxyNameSimple 简化版的更新代理名称（用于检测失败的节点）
+func (pc *ProxyChecker) updateProxyNameSimple(res *Result, speed int) {
+	name := res.Proxy["name"].(string)
+	name = strings.TrimSpace(name)
+
+	var tags []string
+
+	// 如果配置了测速URL，添加速度标签
+	if config.GlobalConfig.SpeedTestUrl != "" {
+		// 移除已有的速度标签
+		name = regexp.MustCompile(`\s*\|(?:\s*[\d.]+[KM]B/s)`).ReplaceAllString(name, "")
+
+		var speedStr string
+		if speed == 0 {
+			speedStr = "0KB/s" // 不可用节点显示0速度
+		} else if speed < 1024 {
+			speedStr = fmt.Sprintf("%dKB/s", speed)
+		} else {
+			speedStr = fmt.Sprintf("%.1fMB/s", float64(speed)/1024)
+		}
+		tags = append(tags, speedStr)
+	}
+
+	// 移除已有的流媒体标记
+	if config.GlobalConfig.MediaCheck {
+		name = regexp.MustCompile(`\s*\|(?:NF|D\+|GPT⁺|GPT|GM|CL|YT-[^|]+|TK-[^|]+|\d+%)`).ReplaceAllString(name, "")
+	}
+
+	if tag, ok := res.Proxy["sub_tag"].(string); ok && tag != "" {
+		tags = append(tags, tag)
+	}
+
+	// 将所有标记添加到名称中
+	if len(tags) > 0 {
+		name += "|" + strings.Join(tags, "|")
+	}
+
+	res.Proxy["name"] = name
 }
 
 // showProgress 显示进度条
