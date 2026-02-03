@@ -536,7 +536,6 @@ func (app *App) getCheckResults(subLink string, appFilter string, refresh bool, 
 	// 检查缓存（如果不是强制刷新）
 	var cachedSpeeds map[string]int
 	var needSpeedTest bool = true
-	var needMediaCheck bool = true
 
 	if !refresh {
 		// 检查速度缓存（1个月有效期）
@@ -1229,8 +1228,19 @@ func (app *App) addMultiPlatformTagsWithMap(results []check.Result, appFilter st
 func (app *App) sortResultsBySpeed(results []check.Result) []check.Result {
 	// 使用 sort.SliceStable 保持相同速度节点的原有顺序
 	sort.SliceStable(results, func(i, j int) bool {
+		// 从节点名称中提取速度
+		speedI := 0
+		speedJ := 0
+
+		if nameI, ok := results[i].Proxy["name"].(string); ok {
+			speedI = app.extractSpeedFromName(nameI)
+		}
+		if nameJ, ok := results[j].Proxy["name"].(string); ok {
+			speedJ = app.extractSpeedFromName(nameJ)
+		}
+
 		// 速度高的排在前面
-		return results[i].Speed > results[j].Speed
+		return speedI > speedJ
 	})
 	return results
 }
