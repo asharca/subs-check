@@ -24,13 +24,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// 速度缓存结构（缓存1个月）
+// 速度缓存结构（缓存10天）
 type speedCache struct {
 	speeds    map[string]int // key: 节点名称, value: 速度(KB/s)
 	timestamp time.Time
 }
 
-// 流媒体缓存结构（缓存1小时）
+// 流媒体缓存结构（缓存30分钟）
 type mediaCache struct {
 	results   []check.Result
 	timestamp time.Time
@@ -538,10 +538,10 @@ func (app *App) getCheckResults(subLink string, appFilter string, refresh bool, 
 	var needSpeedTest bool = true
 
 	if !refresh {
-		// 检查速度缓存（1个月有效期）
+		// 检查速度缓存（10天有效期）
 		speedCacheMutex.RLock()
 		if cached, ok := speedCacheMap[cacheKey]; ok {
-			if time.Since(cached.timestamp) < 30*24*time.Hour { // 30天
+			if time.Since(cached.timestamp) < 10*24*time.Hour { // 10天
 				cachedSpeeds = cached.speeds
 				needSpeedTest = false
 				slog.Info(fmt.Sprintf("使用速度缓存，缓存时间: %v", cached.timestamp.Format("2006-01-02 15:04:05")))
@@ -549,10 +549,10 @@ func (app *App) getCheckResults(subLink string, appFilter string, refresh bool, 
 		}
 		speedCacheMutex.RUnlock()
 
-		// 检查流媒体缓存（1小时有效期）
+		// 检查流媒体缓存（30分钟有效期）
 		mediaCacheMutex.RLock()
 		if cached, ok := mediaCacheMap[cacheKey]; ok {
-			if time.Since(cached.timestamp) < 1*time.Hour {
+			if time.Since(cached.timestamp) < 30*time.Minute { // 30分钟
 				mediaCacheMutex.RUnlock()
 				slog.Info(fmt.Sprintf("使用流媒体缓存，缓存时间: %v", cached.timestamp.Format("2006-01-02 15:04:05")))
 
@@ -574,7 +574,7 @@ func (app *App) getCheckResults(subLink string, appFilter string, refresh bool, 
 		}
 		mediaCacheMutex.RUnlock()
 	} else {
-		slog.Info("强制刷新，忽略缓存")
+		slog.Info("强制刷新，忽略所有缓存（流媒体和速度）")
 	}
 
 	// 如果提供了订阅链接，需要进行完整的检测
